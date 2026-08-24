@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Digital Motion Game - เล่นเกม</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600&display=swap');
+
+    body {
+      font-family: 'Kanit', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f0f2f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow-x: hidden;
+    }
+
+    #game-screen {
+      width: 100%;
+      max-width: 800px;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    #game-container {
+      position: relative;
+      width: 800px;
+      max-width: 100%;
+      aspect-ratio: 4 / 3;
+      margin: 0 auto;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+
+    video {
+      display: none;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+    }
+
+    .hud {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      padding: 0 20px;
+      box-sizing: border-box;
+      z-index: 10;
+      font-size: 24px;
+      font-weight: bold;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+    }
+
+    #error-box {
+      display: none;
+      max-width: 500px;
+      margin: 60px auto;
+      background: white;
+      padding: 30px;
+      border-radius: 15px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      text-align: center;
+      box-sizing: border-box;
+    }
+
+    #error-box button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="game-screen">
+    <div id="game-container">
+      <div class="hud">
+        <div id="scoreDisplay">คะแนน: 0</div>
+        <div id="timeDisplay">เวลา: 30</div>
+      </div>
+      <video id="video" autoplay playsinline></video>
+      <canvas id="output_canvas" width="800" height="600"></canvas>
+    </div>
+    <p style="color: #666; margin-top:10px;">ขยับมือ (ซ้ายหรือขวา) ไปแตะที่กล่องคำตอบที่ถูกต้อง!</p>
+  </div>
+
+  <div id="error-box">
+    <h3>⚠️ ไม่สามารถเข้าถึงกล้องได้</h3>
+    <p id="error-message"></p>
+    <button onclick="window.close()">ปิดแท็บนี้</button>
+  </div>
+
+  <script>
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const videoElement = document.getElementById('video');
+
+    // ค่าเหล่านี้ถูกฉีดจาก code.js (doGet) ผ่าน HtmlService template
+    // แทนการอ่านจาก URLSearchParams เอง เพื่อให้ทำงานถูกต้องแม้ Apps Script
+    // จะเสิร์ฟหน้านี้ผ่าน iframe wrapper ภายในของตัวเอง
+    const pName = <?!= JSON.stringify(playerName) ?>;
+    const pEmpId = <?!= JSON.stringify(empId) ?>;
+    const currentMode = <?!= JSON.stringify(mode) ?>;
+    const returnUrl = <?!= JSON.stringify(returnUrl) ?>;
+
+    let pose, camera;
+    let gameState = 'idle';
+    let score = 0;
+    let timeLeft = 30;
+    let timerInterval;
+    let isCooldown = false;
+    let currentPrompt = {};
+
+    const targetBoxes = [
+      { id: 1, x: 0.1, y: 0.4, w: 0.2, h: 0.15, color: 'red', label: 'สีแดง', tool: 'ERP' },
+      { id: 2, x: 0.7, y: 0.4, w: 0.2, h: 0.15, color: '#00FF00', label: 'สีเขียว', tool: 'SCADA' },
+      { id: 3, x: 0.25, y: 0.7, w: 0.2, h: 0.15, color: 'blue', label: 'สีน้ำเงิน', tool: 'IoT' },
+      { id: 4, x: 0.55, y: 0.7, w: 0.2, h: 0.15, color: 'yellow', label: 'สีเหลือง', tool: 'MES' }
+    ];
+
+    function showError(msg) {
+      document.getElementById('game-screen').style.display = 'none';
+      const box = document.getElementById('error-box');
+      box.style.display = 'block';
+      document.getElementById('error-message').innerText = msg;
+    }
+
+    if (!returnUrl) {
+      showError('ไม่พบข้อมูลผู้เล่น กรุณาปิดแท็บนี้แล้วเริ่มเกมใหม่จากหน้าแรก (กด "เริ่มเกมเลย!")');
+    } else {
+      initMediaPipe();
+    }
+
+    function initMediaPipe() {
+      pose = new Pose({
+        locateFile: function (file) {
+          return "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file;
+        }
+      });
+
+      pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      pose.onResults(onResults);
+
+      camera = new Camera(videoElement, {
+        onFrame: async function () {
+          await pose.send({ image: videoElement });
+        },
+        width: 800,
+        height: 600
+      });
+
+      camera.start().then(function () {
+        gameState = 'playing';
+        score = 0;
+        timeLeft = 30;
+        generateNewPrompt();
+
+        timerInterval = setInterval(function () {
+          timeLeft--;
+          document.getElementById('timeDisplay').innerText = 'เวลา: ' + timeLeft;
+          if (timeLeft <= 0) endGame();
+        }, 1000);
+      }).catch(function (error) {
+        showError(
+          'เปิดกล้องไม่สำเร็จ: ' + error.message +
+          '\nโปรดตรวจสอบว่าไม่มีโปรแกรมอื่น (เช่น Zoom, Meet) แย่งใช้กล้องอยู่ และอนุญาตสิทธิ์กล้องให้เว็บไซต์นี้'
+        );
+      });
+    }
+
+    function generateNewPrompt() {
+      if (currentMode === 'color') {
+        const colors = ['red', '#00FF00', 'blue', 'yellow'];
+        const textLabels = ['สีแดง', 'สีเขียว', 'สีน้ำเงิน', 'สีเหลือง'];
+
+        const targetIndex = Math.floor(Math.random() * colors.length);
+        let fakeColorIndex = Math.floor(Math.random() * colors.length);
+
+        while (fakeColorIndex === targetIndex) {
+          fakeColorIndex = Math.floor(Math.random() * colors.length);
+        }
+
+        currentPrompt = {
+          text: textLabels[targetIndex],
+          bgColor: colors[fakeColorIndex],
+          textColor: 'black',
+          correctTargetIndex: targetIndex
+        };
+      } else {
+        const tools = ['ERP', 'SCADA', 'IoT', 'MES'];
+        const questions = [
+          'ระบบวางแผนทรัพยากร',
+          'ระบบควบคุมเครื่องจักร',
+          'ดึงข้อมูลเซ็นเซอร์',
+          'ควบคุมการผลิตในไลน์'
+        ];
+
+        const targetIndex = Math.floor(Math.random() * tools.length);
+        currentPrompt = {
+          text: questions[targetIndex],
+          bgColor: '#34495e',
+          textColor: 'white',
+          correctTargetIndex: targetIndex
+        };
+      }
+    }
+
+    function onResults(results) {
+      if (gameState !== 'playing') return;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      drawPromptBox();
+      drawTargetBoxes();
+
+      if (results.poseLandmarks) {
+        const leftWrist = results.poseLandmarks[15];
+        const rightWrist = results.poseLandmarks[16];
+
+        if (leftWrist) {
+          drawPoint(leftWrist.x, leftWrist.y, 'cyan');
+          checkCollision(leftWrist);
+        }
+        if (rightWrist) {
+          drawPoint(rightWrist.x, rightWrist.y, 'magenta');
+          checkCollision(rightWrist);
+        }
+      }
+      canvasCtx.restore();
+    }
+
+    function drawPromptBox() {
+      const boxW = 300, boxH = 80;
+      const boxX = (canvasElement.width / 2) - (boxW / 2);
+      const boxY = 50;
+
+      canvasCtx.fillStyle = currentPrompt.bgColor;
+      canvasCtx.fillRect(boxX, boxY, boxW, boxH);
+
+      canvasCtx.fillStyle = currentPrompt.textColor;
+      canvasCtx.font = "bold 30px Kanit";
+      canvasCtx.textAlign = "center";
+      canvasCtx.textBaseline = "middle";
+      canvasCtx.fillText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
+    }
+
+    function drawTargetBoxes() {
+      targetBoxes.forEach(function (box) {
+        const x = box.x * canvasElement.width;
+        const y = box.y * canvasElement.height;
+        const w = box.w * canvasElement.width;
+        const h = box.h * canvasElement.height;
+
+        canvasCtx.fillStyle = currentMode === 'color' ? box.color : '#e0e0e0';
+        canvasCtx.fillRect(x, y, w, h);
+
+        if (currentMode === 'factory') {
+          canvasCtx.fillStyle = '#333';
+          canvasCtx.font = "bold 24px Kanit";
+          canvasCtx.textAlign = "center";
+          canvasCtx.textBaseline = "middle";
+          canvasCtx.fillText(box.tool, x + w / 2, y + h / 2);
+        }
+      });
+    }
+
+    function drawPoint(normX, normY, color) {
+      if (!normX || !normY) return;
+      const x = normX * canvasElement.width;
+      const y = normY * canvasElement.height;
+      canvasCtx.beginPath();
+      canvasCtx.arc(x, y, 15, 0, 2 * Math.PI);
+      canvasCtx.fillStyle = color;
+      canvasCtx.fill();
+    }
+
+    function checkCollision(wrist) {
+      if (!wrist || isCooldown) return;
+
+      const handX = wrist.x;
+      const handY = wrist.y;
+
+      targetBoxes.forEach(function (box, index) {
+        if (handX >= box.x && handX <= box.x + box.w &&
+          handY >= box.y && handY <= box.y + box.h) {
+
+          if (index === currentPrompt.correctTargetIndex) {
+            score += 10;
+            document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
+            isCooldown = true;
+            generateNewPrompt();
+
+            setTimeout(function () { isCooldown = false; }, 500);
+          }
+        }
+      });
+    }
+
+    function endGame() {
+      gameState = 'ended';
+      clearInterval(timerInterval);
+      if (camera) camera.stop();
+
+      // นำทางแท็บนี้ (ที่เปิดจาก window.open) ไปหน้าแสดงผลคะแนน/Leaderboard
+      const params = new URLSearchParams({
+        page: 'result',
+        score: score,
+        name: pName,
+        empId: pEmpId
+      });
+      window.location.href = returnUrl + (returnUrl.includes('?') ? '&' : '?') + params.toString();
+    }
+  </script>
+</body>
+
+</html>
