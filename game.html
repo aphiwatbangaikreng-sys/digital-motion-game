@@ -6,6 +6,7 @@
   <title>Digital Motion Game - เล่นเกม</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;700&display=swap');
 
@@ -110,6 +111,34 @@
       font-weight: 600;
       cursor: pointer;
     }
+
+    .calib-box {
+      display: none;
+      position: absolute;
+      z-index: 30;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      width: min(92vw, 420px);
+      background: rgba(0, 0, 0, 0.72);
+      backdrop-filter: blur(6px);
+      color: #fff;
+      border-radius: 14px;
+      padding: 16px 18px 18px;
+      box-sizing: border-box;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .calib-box h3 { margin: 0 0 6px; font-size: 16px; }
+    .calib-status { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+    .calib-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; }
+    .calib-table td { padding: 4px 2px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+    .calib-table td:last-child { text-align: right; font-family: monospace; font-weight: 700; }
+    #calibStartBtn {
+      width: 100%; padding: 12px; border: none; border-radius: 10px;
+      background: linear-gradient(90deg, #7c3aed, #06b6d4); color: #fff;
+      font-size: 15px; font-weight: 700; font-family: 'Kanit', sans-serif; cursor: pointer;
+    }
+    #calibStartBtn:disabled { opacity: 0.4; cursor: not-allowed; }
   </style>
 </head>
 
@@ -123,6 +152,18 @@
       <video id="video" autoplay playsinline></video>
       <canvas id="output_canvas"></canvas>
       <p class="instructions" id="instructionsText">แตะกล่องคำตอบที่ถูกต้องด้วยมือให้ตรงกับคำสั่ง!</p>
+
+      <div id="calibration-box" class="calib-box">
+        <h3>📏 ตรวจสอบตำแหน่งก่อนเริ่มเกม</h3>
+        <p id="calibStatusText" class="calib-status">กำลังตรวจจับ...</p>
+        <table class="calib-table">
+          <tr><td>ความกว้างไหล่ (shoulderWidth)</td><td id="calibShoulderWidth">-</td></tr>
+          <tr><td>จุดกึ่งกลางตัว X (centerX)</td><td id="calibCenterX">-</td></tr>
+          <tr><td>ค่าเบี่ยงจากกึ่งกลาง (offsetX)</td><td id="calibOffsetX">-</td></tr>
+          <tr><td>มองเห็นไหล่ชัดเจน</td><td id="calibVisibility">-</td></tr>
+        </table>
+        <button id="calibStartBtn" disabled>▶️ เริ่มเกม</button>
+      </div>
     </div>
   </div>
 
@@ -157,7 +198,7 @@
     };
     document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
 
-    let hands, camera;
+    let hands, camera, pose;
     let gameState = 'idle';
     let score = 0;
     let timeLeft = 30;
@@ -185,6 +226,13 @@
 
     const CENTER_ZONE = { x: 0.5, y: 0.55, r: 0.11 }; // วงกลมเป้าหมายกลางจอ (สัดส่วนของ min(w,h))
     const OBSTACLE_HIT_RADIUS = 0.085;
+
+    // ---------- ตรวจสอบตำแหน่งผู้เล่นก่อนเริ่มเกม (ระยะ + จุดกึ่งกลาง) ----------
+    // ปรับค่าพวกนี้ตามหน้างานจริงได้เลย โดยดูตัวเลขสดจากตาราง Debug ตอน calibrate
+    const SHOULDER_WIDTH_TOO_CLOSE = 0.42; // กว้างกว่านี้ = ยืนใกล้กล้องเกินไป ให้ถอยออก
+    const SHOULDER_WIDTH_TOO_FAR = 0.14;   // แคบกว่านี้ = ยืนไกล/ตรวจไม่ชัดเจน
+    const CENTER_OFFSET_TOLERANCE = 0.12;  // ระยะเบี่ยงจากกึ่งกลางเฟรมที่ยอมรับได้
+    const SHOULDER_VISIBILITY_MIN = 0.5;   // ความมั่นใจขั้นต่ำว่าเห็นไหล่ทั้งสองข้างชัด
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -220,34 +268,121 @@
 
       hands.onResults(onResults);
 
+      // Pose: ใช้ดูตำแหน่งไหล่ (ตัวคนทั้งตัว) เพื่อเช็คระยะห่าง+จุดกึ่งกลาง
+      // ก่อนอนุญาตให้เริ่มเกม (Hands อย่างเดียวไม่รู้ว่าคนยืนใกล้/ไกล/เอียงแค่ไหน)
+      pose = new Pose({
+        locateFile: function (file) {
+          return "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file;
+        }
+      });
+      pose.setOptions({
+        modelComplexity: 0,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+      pose.onResults(onPoseResults);
+
       camera = new Camera(videoElement, {
         onFrame: async function () {
           await hands.send({ image: videoElement });
+          await pose.send({ image: videoElement });
         },
         width: 960,
         height: 540
       });
 
       camera.start().then(function () {
-        gameState = 'playing';
-        score = 0;
-        timeLeft = 30;
-        roundNumber = 0;
-        startTime = performance.now();
-        updateTimeDisplay();
-        generateNewPrompt();
-
-        timerInterval = setInterval(function () {
-          timeLeft--;
-          updateTimeDisplay();
-          if (timeLeft <= 0) endGame();
-        }, 1000);
+        // เปิดกล้องสำเร็จ -> เข้าหน้าตรวจตำแหน่งก่อน (calibrating) ยังไม่เริ่มจับเวลา
+        gameState = 'calibrating';
+        document.getElementById('calibration-box').style.display = 'block';
       }).catch(function (error) {
         showError(
           'เปิดกล้องไม่สำเร็จ: ' + error.message +
           '\nโปรดตรวจสอบว่าไม่มีโปรแกรมอื่น (เช่น Zoom, Meet) แย่งใช้กล้องอยู่ และอนุญาตสิทธิ์กล้องให้เว็บไซต์นี้'
         );
       });
+    }
+
+    function startGamePlay() {
+      document.getElementById('calibration-box').style.display = 'none';
+      gameState = 'playing';
+      score = 0;
+      timeLeft = 30;
+      roundNumber = 0;
+      startTime = performance.now();
+      updateTimeDisplay();
+      generateNewPrompt();
+
+      timerInterval = setInterval(function () {
+        timeLeft--;
+        updateTimeDisplay();
+        if (timeLeft <= 0) endGame();
+      }, 1000);
+    }
+
+    document.getElementById('calibStartBtn').addEventListener('click', function () {
+      if (!this.disabled) startGamePlay();
+    });
+
+    // คำนวณตำแหน่ง/ระยะห่างของผู้เล่นจากจุด landmark ไหล่ซ้าย-ขวา (index 11, 12) ของ Pose
+    function computeBodyMetrics(lm) {
+      if (!lm || !lm[11] || !lm[12]) {
+        return { detected: false, shoulderWidth: null, centerX: null, offsetX: null, visOk: false, status: 'no_person' };
+      }
+      const leftSh = lm[11], rightSh = lm[12];
+      const shoulderWidth = Math.abs(leftSh.x - rightSh.x);
+      const centerX = (leftSh.x + rightSh.x) / 2;
+      const offsetX = centerX - 0.5;
+      const visOk = (leftSh.visibility || 0) >= SHOULDER_VISIBILITY_MIN && (rightSh.visibility || 0) >= SHOULDER_VISIBILITY_MIN;
+
+      let status = 'ok';
+      if (!visOk) status = 'no_person';
+      else if (shoulderWidth > SHOULDER_WIDTH_TOO_CLOSE) status = 'too_close';
+      else if (shoulderWidth < SHOULDER_WIDTH_TOO_FAR) status = 'too_far';
+      else if (Math.abs(offsetX) > CENTER_OFFSET_TOLERANCE) status = 'off_center';
+
+      return { detected: true, shoulderWidth: shoulderWidth, centerX: centerX, offsetX: offsetX, visOk: visOk, status: status };
+    }
+
+    const CALIB_STATUS_TEXT = {
+      no_person: '⚠️ ยังไม่เจอคนในเฟรม กรุณายืนให้เห็นตัวชัดๆ',
+      too_close: '↩️ ใกล้กล้องเกินไป กรุณาถอยออกไปอีกหน่อย',
+      too_far: '↪️ ไกล/ไม่ชัดเจน กรุณาขยับเข้ามาใกล้กล้องอีกนิด',
+      off_center: '↔️ กรุณาขยับไปยืนตรงกลางเฟรม (ตรงหน้ากล้องพอดี)',
+      ok: '✅ ตำแหน่งพร้อมแล้ว! กดปุ่มเริ่มเกมได้เลย'
+    };
+
+    function updateCalibrationUI(metrics) {
+      document.getElementById('calibShoulderWidth').innerText = metrics.shoulderWidth !== null ? metrics.shoulderWidth.toFixed(3) : '-';
+      document.getElementById('calibCenterX').innerText = metrics.centerX !== null ? metrics.centerX.toFixed(3) : '-';
+      document.getElementById('calibOffsetX').innerText = metrics.offsetX !== null ? metrics.offsetX.toFixed(3) : '-';
+      document.getElementById('calibVisibility').innerText = metrics.detected ? (metrics.visOk ? 'เห็นชัด' : 'ไม่ชัด/ไม่ครบ') : '-';
+
+      const statusEl = document.getElementById('calibStatusText');
+      statusEl.innerText = CALIB_STATUS_TEXT[metrics.status] || '';
+      statusEl.style.color = metrics.status === 'ok' ? '#7CFC00' : '#ffd166';
+
+      document.getElementById('calibStartBtn').disabled = metrics.status !== 'ok';
+    }
+
+    function onPoseResults(results) {
+      const metrics = computeBodyMetrics(results.poseLandmarks);
+      if (gameState === 'calibrating') {
+        // วาดภาพกล้องสดพร้อมเส้นไกด์กึ่งกลาง ไว้ตอนตรวจตำแหน่งก่อนเริ่มเกม
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.strokeStyle = 'rgba(255,255,255,0.35)';
+        canvasCtx.lineWidth = 2;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(canvasElement.width / 2, 0);
+        canvasCtx.lineTo(canvasElement.width / 2, canvasElement.height);
+        canvasCtx.stroke();
+        canvasCtx.restore();
+
+        updateCalibrationUI(metrics);
+      }
     }
 
     function updateTimeDisplay() {
