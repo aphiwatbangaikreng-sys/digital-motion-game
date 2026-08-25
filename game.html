@@ -9,34 +9,33 @@
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600&display=swap');
 
-    body {
-      font-family: 'Kanit', sans-serif;
+    html, body {
       margin: 0;
       padding: 0;
-      background-color: #f0f2f5;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+    }
+
+    body {
+      font-family: 'Kanit', sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      overflow-x: hidden;
     }
 
     #game-screen {
-      width: 100%;
-      max-width: 800px;
-      text-align: center;
-      padding: 20px;
-      box-sizing: border-box;
+      width: 100vw;
+      height: 100vh;
+      position: relative;
     }
 
     #game-container {
       position: relative;
-      width: 800px;
-      max-width: 100%;
-      aspect-ratio: 4 / 3;
-      margin: 0 auto;
-      border-radius: 10px;
+      width: 100vw;
+      height: 100vh;
       overflow: hidden;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      background-color: #000;
     }
 
     video {
@@ -61,10 +60,22 @@
       padding: 0 20px;
       box-sizing: border-box;
       z-index: 10;
-      font-size: 24px;
+      font-size: clamp(18px, 3vw, 28px);
       font-weight: bold;
       color: white;
       text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+      pointer-events: none;
+    }
+
+    .instructions {
+      position: absolute;
+      bottom: 12px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.9);
+      font-size: clamp(13px, 1.8vw, 18px);
+      z-index: 10;
       pointer-events: none;
     }
 
@@ -101,9 +112,9 @@
         <div id="timeDisplay">เวลา: 30</div>
       </div>
       <video id="video" autoplay playsinline></video>
-      <canvas id="output_canvas" width="800" height="600"></canvas>
+      <canvas id="output_canvas"></canvas>
+      <p class="instructions">ขยับมือ (ซ้ายหรือขวา) ไปแตะที่กล่องคำตอบที่ถูกต้อง!</p>
     </div>
-    <p style="color: #666; margin-top:10px;">ขยับมือ (ซ้ายหรือขวา) ไปแตะที่กล่องคำตอบที่ถูกต้อง!</p>
   </div>
 
   <div id="error-box">
@@ -117,9 +128,7 @@
     const canvasCtx = canvasElement.getContext('2d');
     const videoElement = document.getElementById('video');
 
-    // เปลี่ยนจากการรับค่าแบบ Apps Script template
-    //   มาเป็นอ่านจาก URL query string ตรง ๆ เพราะไฟล์นี้ถูกโฮสต์แยกต่างหาก
-    //   (ไม่ได้รันผ่าน HtmlService ของ Apps Script อีกต่อไป)
+    // อ่านค่าจาก URL query string (หน้านี้โฮสต์แยกจาก Apps Script)
     const urlParams = new URLSearchParams(window.location.search);
     const pName = urlParams.get('name') || 'ผู้เล่น';
     const pEmpId = urlParams.get('empId') || '';
@@ -134,12 +143,34 @@
     let isCooldown = false;
     let currentPrompt = {};
 
-    const targetBoxes = [
-      { id: 1, x: 0.1, y: 0.4, w: 0.2, h: 0.15, color: 'red', label: 'สีแดง', tool: 'ERP' },
-      { id: 2, x: 0.7, y: 0.4, w: 0.2, h: 0.15, color: '#00FF00', label: 'สีเขียว', tool: 'SCADA' },
-      { id: 3, x: 0.25, y: 0.7, w: 0.2, h: 0.15, color: 'blue', label: 'สีน้ำเงิน', tool: 'IoT' },
-      { id: 4, x: 0.55, y: 0.7, w: 0.2, h: 0.15, color: 'yellow', label: 'สีเหลือง', tool: 'MES' }
+    // ตำแหน่งกล่องคำตอบ 4 ตำแหน่ง (สัดส่วนของจอ) — จะถูกสุ่มสลับให้แต่ละรอบ
+    const boxPositions = [
+      { x: 0.04, y: 0.32, w: 0.20, h: 0.20 },
+      { x: 0.76, y: 0.32, w: 0.20, h: 0.20 },
+      { x: 0.22, y: 0.68, w: 0.20, h: 0.20 },
+      { x: 0.56, y: 0.68, w: 0.20, h: 0.20 }
     ];
+
+    // เก็บกล่องคำตอบของรอบปัจจุบัน (ตำแหน่ง + เนื้อหา ถูกสุ่มรวมกันใหม่ทุกรอบ)
+    let currentBoxes = [];
+
+    function shuffle(array) {
+      const a = array.slice();
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = a[i];
+        a[i] = a[j];
+        a[j] = tmp;
+      }
+      return a;
+    }
+
+    function resizeCanvas() {
+      canvasElement.width = window.innerWidth;
+      canvasElement.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
     function showError(msg) {
       document.getElementById('game-screen').style.display = 'none';
@@ -175,8 +206,8 @@
         onFrame: async function () {
           await pose.send({ image: videoElement });
         },
-        width: 800,
-        height: 600
+        width: 1280,
+        height: 720
       });
 
       camera.start().then(function () {
@@ -199,39 +230,64 @@
     }
 
     function generateNewPrompt() {
+      const shuffledPositions = shuffle(boxPositions);
+
       if (currentMode === 'color') {
-        const colors = ['red', '#00FF00', 'blue', 'yellow'];
-        const textLabels = ['สีแดง', 'สีเขียว', 'สีน้ำเงิน', 'สีเหลือง'];
+        const colorDefs = [
+          { color: 'red', label: 'สีแดง' },
+          { color: '#00FF00', label: 'สีเขียว' },
+          { color: 'blue', label: 'สีน้ำเงิน' },
+          { color: 'yellow', label: 'สีเหลือง' }
+        ];
 
-        const targetIndex = Math.floor(Math.random() * colors.length);
-        let fakeColorIndex = Math.floor(Math.random() * colors.length);
-
+        const targetIndex = Math.floor(Math.random() * colorDefs.length);
+        let fakeColorIndex = Math.floor(Math.random() * colorDefs.length);
         while (fakeColorIndex === targetIndex) {
-          fakeColorIndex = Math.floor(Math.random() * colors.length);
+          fakeColorIndex = Math.floor(Math.random() * colorDefs.length);
         }
 
         currentPrompt = {
-          text: textLabels[targetIndex],
-          bgColor: colors[fakeColorIndex],
-          textColor: 'black',
-          correctTargetIndex: targetIndex
+          text: colorDefs[targetIndex].label,
+          bgColor: colorDefs[fakeColorIndex].color,
+          textColor: 'black'
         };
+
+        currentBoxes = colorDefs.map(function (c, i) {
+          return {
+            color: c.color,
+            isCorrect: i === targetIndex,
+            x: shuffledPositions[i].x,
+            y: shuffledPositions[i].y,
+            w: shuffledPositions[i].w,
+            h: shuffledPositions[i].h
+          };
+        });
       } else {
-        const tools = ['ERP', 'SCADA', 'IoT', 'MES'];
-        const questions = [
-          'ระบบวางแผนทรัพยากร',
-          'ระบบควบคุมเครื่องจักร',
-          'ดึงข้อมูลเซ็นเซอร์',
-          'ควบคุมการผลิตในไลน์'
+        const toolDefs = [
+          { tool: 'ERP', question: 'ระบบวางแผนทรัพยากร' },
+          { tool: 'SCADA', question: 'ระบบควบคุมเครื่องจักร' },
+          { tool: 'IoT', question: 'ดึงข้อมูลเซ็นเซอร์' },
+          { tool: 'MES', question: 'ควบคุมการผลิตในไลน์' }
         ];
 
-        const targetIndex = Math.floor(Math.random() * tools.length);
+        const targetIndex = Math.floor(Math.random() * toolDefs.length);
+
         currentPrompt = {
-          text: questions[targetIndex],
+          text: toolDefs[targetIndex].question,
           bgColor: '#34495e',
-          textColor: 'white',
-          correctTargetIndex: targetIndex
+          textColor: 'white'
         };
+
+        currentBoxes = toolDefs.map(function (t, i) {
+          return {
+            tool: t.tool,
+            isCorrect: i === targetIndex,
+            x: shuffledPositions[i].x,
+            y: shuffledPositions[i].y,
+            w: shuffledPositions[i].w,
+            h: shuffledPositions[i].h
+          };
+        });
       }
     }
 
@@ -261,23 +317,34 @@
       canvasCtx.restore();
     }
 
+    // วาดข้อความแบบ "กลับด้านสวนทาง" ล่วงหน้า เพราะทั้ง canvas ถูก mirror ด้วย CSS (transform: scaleX(-1))
+    // ถ้าวาดตัวหนังสือแบบปกติ มันจะกลับด้านตอนแสดงผลจริง ต้อง flip ที่นี่อีกทีเพื่อหักล้างกัน
+    function drawMirroredText(text, cx, cy) {
+      canvasCtx.save();
+      canvasCtx.textAlign = "center";
+      canvasCtx.textBaseline = "middle";
+      canvasCtx.translate(cx, cy);
+      canvasCtx.scale(-1, 1);
+      canvasCtx.fillText(text, 0, 0);
+      canvasCtx.restore();
+    }
+
     function drawPromptBox() {
-      const boxW = 300, boxH = 80;
+      const boxW = Math.min(420, canvasElement.width * 0.5);
+      const boxH = Math.max(70, canvasElement.height * 0.09);
       const boxX = (canvasElement.width / 2) - (boxW / 2);
-      const boxY = 50;
+      const boxY = canvasElement.height * 0.05;
 
       canvasCtx.fillStyle = currentPrompt.bgColor;
       canvasCtx.fillRect(boxX, boxY, boxW, boxH);
 
       canvasCtx.fillStyle = currentPrompt.textColor;
-      canvasCtx.font = "bold 30px Kanit";
-      canvasCtx.textAlign = "center";
-      canvasCtx.textBaseline = "middle";
-      canvasCtx.fillText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
+      canvasCtx.font = "bold " + Math.round(boxH * 0.4) + "px Kanit";
+      drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
     }
 
     function drawTargetBoxes() {
-      targetBoxes.forEach(function (box) {
+      currentBoxes.forEach(function (box) {
         const x = box.x * canvasElement.width;
         const y = box.y * canvasElement.height;
         const w = box.w * canvasElement.width;
@@ -289,9 +356,7 @@
         if (currentMode === 'factory') {
           canvasCtx.fillStyle = '#333';
           canvasCtx.font = "bold 24px Kanit";
-          canvasCtx.textAlign = "center";
-          canvasCtx.textBaseline = "middle";
-          canvasCtx.fillText(box.tool, x + w / 2, y + h / 2);
+          drawMirroredText(box.tool, x + w / 2, y + h / 2);
         }
       });
     }
@@ -312,11 +377,11 @@
       const handX = wrist.x;
       const handY = wrist.y;
 
-      targetBoxes.forEach(function (box, index) {
+      currentBoxes.forEach(function (box) {
         if (handX >= box.x && handX <= box.x + box.w &&
           handY >= box.y && handY <= box.y + box.h) {
 
-          if (index === currentPrompt.correctTargetIndex) {
+          if (box.isCorrect) {
             score += 10;
             document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
             isCooldown = true;
@@ -333,8 +398,6 @@
       clearInterval(timerInterval);
       if (camera) camera.stop();
 
-      // นำทางแท็บนี้กลับไปหน้า Apps Script (returnUrl) เพื่อแสดงผลคะแนน/Leaderboard
-      // เป็นการ redirect ธรรมดา (ไม่ใช่ fetch) จึงไม่ติดปัญหา CORS แม้ข้ามโดเมน
       const params = new URLSearchParams({
         page: 'result',
         score: score,
