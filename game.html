@@ -88,7 +88,7 @@
       box-sizing: border-box;
     }
 
-    #error-box {
+    .info-box {
       display: none;
       max-width: 500px;
       margin: 60px auto;
@@ -100,7 +100,7 @@
       box-sizing: border-box;
     }
 
-    #error-box button {
+    .info-box button {
       background-color: #007bff;
       color: white;
       border: none;
@@ -110,12 +110,28 @@
       font-weight: 600;
       cursor: pointer;
     }
+
+    .test-mode-badge {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 193, 7, 0.9);
+      color: #3a2a00;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 14px;
+      border-radius: 999px;
+      z-index: 10;
+      pointer-events: none;
+    }
   </style>
 </head>
 
 <body>
   <div id="game-screen">
     <div id="game-container">
+      <div id="testModeBadge" class="test-mode-badge" style="display:none;">🧪 โหมดทดสอบ (เปิดตรงๆ ไม่ผ่านหน้าแรก — คะแนนจะไม่ถูกบันทึก)</div>
       <div class="hud">
         <div id="scoreDisplay" class="hud-pill">คะแนน: 0</div>
         <div id="timeDisplay" class="hud-pill">เวลา: 30</div>
@@ -126,10 +142,17 @@
     </div>
   </div>
 
-  <div id="error-box">
+  <div id="error-box" class="info-box">
     <h3>⚠️ ไม่สามารถเข้าถึงกล้องได้</h3>
     <p id="error-message"></p>
     <button onclick="window.close()">ปิดแท็บนี้</button>
+  </div>
+
+  <div id="test-result-box" class="info-box">
+    <h3>🏁 จบเกม (โหมดทดสอบ)</h3>
+    <p>คะแนนที่ได้: <b id="testScoreText">0</b></p>
+    <p style="font-size:13px;color:#666;">*ไม่มีการบันทึกคะแนน เพราะเปิดหน้านี้แบบทดสอบโดยตรง ไม่ได้มาจากหน้าแรก</p>
+    <button onclick="location.reload()">🔁 เล่นอีกครั้ง</button>
   </div>
 
   <script>
@@ -138,10 +161,11 @@
     const videoElement = document.getElementById('video');
 
     const urlParams = new URLSearchParams(window.location.search);
-    const pName = urlParams.get('name') || 'ผู้เล่น';
-    const pEmpId = urlParams.get('empId') || '';
+    const pName = urlParams.get('name') || 'ผู้เล่นทดสอบ';
+    const pEmpId = urlParams.get('empId') || 'TEST';
     const currentMode = urlParams.get('mode') || 'color';
     const returnUrl = urlParams.get('returnUrl') || '';
+    const isTestMode = !returnUrl; // เปิดหน้านี้ตรงๆ โดยไม่ผ่านหน้าแรก (ไม่มี returnUrl) = โหมดทดสอบ
 
     const INSTRUCTIONS = {
       color: 'ชี้ไปที่ "กล่องสี" ที่ตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
@@ -193,11 +217,10 @@
       document.getElementById('error-message').innerText = msg;
     }
 
-    if (!returnUrl) {
-      showError('ไม่พบข้อมูลผู้เล่น กรุณาปิดแท็บนี้แล้วเริ่มเกมใหม่จากหน้าแรก (กด "เริ่มเกมเลย!")');
-    } else {
-      initMediaPipe();
+    if (isTestMode) {
+      document.getElementById('testModeBadge').style.display = 'block';
     }
+    initMediaPipe();
 
     function initMediaPipe() {
       // ใช้ MediaPipe Hands แทน Pose: ให้จุด landmark ของมือ 21 จุด/ข้าง (ปลายนิ้ว/ข้อนิ้วครบ)
@@ -915,6 +938,14 @@
       gameState = 'ended';
       clearInterval(timerInterval);
       if (camera) camera.stop();
+
+      if (isTestMode) {
+        // โหมดทดสอบ: ไม่มี returnUrl ให้กลับไป ก็แสดงคะแนนสรุปในหน้านี้แทนการ redirect
+        document.getElementById('game-screen').style.display = 'none';
+        document.getElementById('testScoreText').innerText = score;
+        document.getElementById('test-result-box').style.display = 'block';
+        return;
+      }
 
       const params = new URLSearchParams({
         page: 'result',
