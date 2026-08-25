@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <title>Digital Motion Game - เล่นเกม</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;700&display=swap');
 
@@ -88,7 +88,7 @@
       box-sizing: border-box;
     }
 
-    .info-box {
+    #error-box {
       display: none;
       max-width: 500px;
       margin: 60px auto;
@@ -100,7 +100,7 @@
       box-sizing: border-box;
     }
 
-    .info-box button {
+    #error-box button {
       background-color: #007bff;
       color: white;
       border: none;
@@ -110,28 +110,12 @@
       font-weight: 600;
       cursor: pointer;
     }
-
-    .test-mode-badge {
-      position: absolute;
-      top: 14px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255, 193, 7, 0.9);
-      color: #3a2a00;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 5px 14px;
-      border-radius: 999px;
-      z-index: 10;
-      pointer-events: none;
-    }
   </style>
 </head>
 
 <body>
   <div id="game-screen">
     <div id="game-container">
-      <div id="testModeBadge" class="test-mode-badge" style="display:none;">🧪 โหมดทดสอบ (เปิดตรงๆ ไม่ผ่านหน้าแรก — คะแนนจะไม่ถูกบันทึก)</div>
       <div class="hud">
         <div id="scoreDisplay" class="hud-pill">คะแนน: 0</div>
         <div id="timeDisplay" class="hud-pill">เวลา: 30</div>
@@ -142,17 +126,10 @@
     </div>
   </div>
 
-  <div id="error-box" class="info-box">
+  <div id="error-box">
     <h3>⚠️ ไม่สามารถเข้าถึงกล้องได้</h3>
     <p id="error-message"></p>
     <button onclick="window.close()">ปิดแท็บนี้</button>
-  </div>
-
-  <div id="test-result-box" class="info-box">
-    <h3>🏁 จบเกม (โหมดทดสอบ)</h3>
-    <p>คะแนนที่ได้: <b id="testScoreText">0</b></p>
-    <p style="font-size:13px;color:#666;">*ไม่มีการบันทึกคะแนน เพราะเปิดหน้านี้แบบทดสอบโดยตรง ไม่ได้มาจากหน้าแรก</p>
-    <button onclick="location.reload()">🔁 เล่นอีกครั้ง</button>
   </div>
 
   <script>
@@ -161,20 +138,19 @@
     const videoElement = document.getElementById('video');
 
     const urlParams = new URLSearchParams(window.location.search);
-    const pName = urlParams.get('name') || 'ผู้เล่นทดสอบ';
-    const pEmpId = urlParams.get('empId') || 'TEST';
+    const pName = urlParams.get('name') || 'ผู้เล่น';
+    const pEmpId = urlParams.get('empId') || '';
     const currentMode = urlParams.get('mode') || 'color';
     const returnUrl = urlParams.get('returnUrl') || '';
-    const isTestMode = !returnUrl; // เปิดหน้านี้ตรงๆ โดยไม่ผ่านหน้าแรก (ไม่มี returnUrl) = โหมดทดสอบ
 
     const INSTRUCTIONS = {
-      color: 'ชี้ไปที่ "กล่องสี" ที่ตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
-      digital: 'ชี้ไปที่ "กล่องเครื่องมือดิจิทัล" ที่มีชื่อตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
-      shape: 'ชี้ไปที่ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสี แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
+      color: 'แตะ "กล่องสี" ที่ตรงกับคำสั่งด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      digital: 'แตะ "กล่องเครื่องมือดิจิทัล" ที่มีชื่อตรงกับคำสั่งด้วยมือ! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      shape: 'แตะ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสีด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
     };
     document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
 
-    let hands, camera;
+    let pose, camera;
     let gameState = 'idle';
     let score = 0;
     let timeLeft = 30;
@@ -182,7 +158,6 @@
     let isCooldown = false;
     let currentPrompt = {};
     let startTime = performance.now();
-    let lastFrameTime = 0;
     let roundNumber = 0;
 
     let floatingBoxes = [];   // กล่องคำตอบที่ลอยไปมา รอบปัจจุบัน
@@ -191,14 +166,8 @@
     let tapCooldown = { left: 0, right: 0 }; // กันแตะซ้ำรัวๆ หลังแตะผิด (เฟรม)
     let hoverId = { left: null, right: null }; // id กล่องที่มือกำลังอยู่ใกล้ๆ (ใช้ทำ highlight)
     let smoothedHand = { left: null, right: null }; // ตำแหน่งมือแบบ smoothing กันกระตุก
-    let holdProgress = { left: 0, right: 0 };  // ความคืบหน้าการ "กำมือค้าง" เพื่อยืนยัน (0-1)
-    let holdTargetId = { left: null, right: null }; // id กล่องที่กำลังนับ hold อยู่
     let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
     let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
-
-    const HOLD_DURATION_MS = 550;                 // เวลาที่ต้องกำมือค้างบนกล่องเพื่อยืนยันการเลือก
-    const HOLD_GROW_RATE = 1 / HOLD_DURATION_MS;  // อัตราการเพิ่ม progress ต่อ ms ตอนกำมือค้าง
-    const HOLD_DECAY_RATE = HOLD_GROW_RATE * 2.5; // อัตราการลด progress ต่อ ms ตอนคลายมือ (ลดเร็วกว่าตอนเพิ่ม)
 
     const CENTER_ZONE = { x: 0.5, y: 0.55, r: 0.11 }; // วงกลมเป้าหมายกลางจอ (สัดส่วนของ min(w,h))
     const OBSTACLE_HIT_RADIUS = 0.085;
@@ -217,32 +186,33 @@
       document.getElementById('error-message').innerText = msg;
     }
 
-    if (isTestMode) {
-      document.getElementById('testModeBadge').style.display = 'block';
+    if (!returnUrl) {
+      showError('ไม่พบข้อมูลผู้เล่น กรุณาปิดแท็บนี้แล้วเริ่มเกมใหม่จากหน้าแรก (กด "เริ่มเกมเลย!")');
+    } else {
+      initMediaPipe();
     }
-    initMediaPipe();
 
     function initMediaPipe() {
-      // ใช้ MediaPipe Hands แทน Pose: ให้จุด landmark ของมือ 21 จุด/ข้าง (ปลายนิ้ว/ข้อนิ้วครบ)
-      // แม่นยำกว่าการประมาณตำแหน่งมือจากโครงร่างร่างกายแบบเดิมมาก และทำให้ตรวจจับท่ากำมือได้
-      hands = new Hands({
+      pose = new Pose({
         locateFile: function (file) {
-          return "https://cdn.jsdelivr.net/npm/@mediapipe/hands/" + file;
+          return "https://cdn.jsdelivr.net/npm/@mediapipe/pose/" + file;
         }
       });
 
-      hands.setOptions({
-        maxNumHands: 2,
+      // เพิ่มความแม่นยำ: threshold สูงขึ้นเพื่อลด false positive
+      pose.setOptions({
         modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       });
 
-      hands.onResults(onResults);
+      pose.onResults(onResults);
 
       camera = new Camera(videoElement, {
         onFrame: async function () {
-          await hands.send({ image: videoElement });
+          await pose.send({ image: videoElement });
         },
         width: 960,
         height: 540
@@ -328,8 +298,8 @@
       return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62;
     }
 
-    // จำนวนกล่องต่อรอบ: ไล่ 3 -> 4 -> 6 -> 8 -> 9 แล้ววนกลับลงมา สลับไปมาเรื่อยๆ (ลดจำนวนลงจากเดิมเล็กน้อย)
-    const COUNT_SEQUENCE = [3, 4, 6, 8, 9, 8, 6, 4];
+    // จำนวนกล่องต่อรอบ: ไล่ 4 -> 6 -> 8 -> 10 -> 12 แล้ววนกลับลงมา สลับไปมาเรื่อยๆ
+    const COUNT_SEQUENCE = [4, 6, 8, 10, 12, 10, 8, 6];
     function countForRound(round) {
       return COUNT_SEQUENCE[round % COUNT_SEQUENCE.length];
     }
@@ -401,8 +371,6 @@
 
     function generateNewPrompt() {
       hoverId = { left: null, right: null };
-      holdProgress = { left: 0, right: 0 };
-      holdTargetId = { left: null, right: null };
       particles = [];
       feedback = null;
       roundNumber++;
@@ -432,7 +400,7 @@
           };
         }));
       } else if (currentMode === 'shape') {
-        const count = Math.min(countForRound(roundNumber - 1), 8);
+        const count = Math.min(countForRound(roundNumber - 1), 10);
         const shapeIdx = Math.floor(Math.random() * SHAPES.length);
         const colorIdx = Math.floor(Math.random() * COLOR_POOL.length);
 
@@ -483,7 +451,7 @@
         }));
       } else {
         // โหมด Digital Tools: หาให้เจอกล่องเครื่องมือดิจิทัลที่มีชื่อตรงกับคำสั่ง
-        const count = Math.min(countForRound(roundNumber - 1), 5);
+        const count = Math.min(countForRound(roundNumber - 1), 6);
         const pool = shuffle(TOOL_LIST.map(function (name, i) {
           return { name: name, color: TOOL_COLORS[i] };
         })).slice(0, count);
@@ -527,35 +495,8 @@
       return smoothedHand[key];
     }
 
-    // ตรวจว่ามือ "กำ" อยู่หรือไม่ จากจุด landmark ทั้ง 21 จุดของมือข้างนั้น
-    // หลักการ: นิ้วที่งอ/กำเข้าหาฝ่ามือ ปลายนิ้ว (tip) จะอยู่ใกล้ข้อมือ (wrist)
-    // มากกว่าข้อกลางนิ้ว (pip) — เช็ค 4 นิ้ว (ชี้/กลาง/นาง/ก้อย) ถ้างออย่างน้อย 3 ใน 4 ถือว่ากำมือ
-    function isFist(landmarks) {
-      if (!landmarks) return false;
-      const wrist = landmarks[0];
-      function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-      const fingers = [
-        { tip: 8, pip: 6 },   // นิ้วชี้
-        { tip: 12, pip: 10 }, // นิ้วกลาง
-        { tip: 16, pip: 14 }, // นิ้วนาง
-        { tip: 20, pip: 18 }  // นิ้วก้อย
-      ];
-      let curled = 0;
-      fingers.forEach(function (f) {
-        const tipDist = dist(landmarks[f.tip], wrist);
-        const pipDist = dist(landmarks[f.pip], wrist);
-        if (tipDist < pipDist * 1.05) curled++;
-      });
-      return curled >= 3;
-    }
-
-    function checkBoxTap(key, hand, landmarks, dt) {
-      if (!hand) {
-        hoverId[key] = null;
-        holdProgress[key] = 0;
-        holdTargetId[key] = null;
-        return;
-      }
+    function checkBoxTap(key, hand) {
+      if (!hand) { hoverId[key] = null; return; }
 
       const tapRadius = grabRadiusForCount(floatingBoxes.length);
 
@@ -567,8 +508,8 @@
       });
       hoverId[key] = nearest ? nearest.id : null;
 
-      if (isCooldown) { holdProgress[key] = 0; holdTargetId[key] = null; return; } // กำลังรอรอบถัดไปหลังแตะถูก
-      if (tapCooldown[key] > 0) { tapCooldown[key]--; holdProgress[key] = 0; holdTargetId[key] = null; return; } // กันแตะรัวหลังแตะผิด
+      if (isCooldown) return;          // กำลังรอรอบถัดไปหลังแตะถูก
+      if (tapCooldown[key] > 0) { tapCooldown[key]--; return; } // กันแตะรัวหลังแตะผิด
 
       // หากล่องที่มืออยู่ในระยะแตะจริงๆ (ใกล้กว่า nearest ด้านบน)
       let target = null, targetDist = Infinity;
@@ -576,26 +517,7 @@
         const d = Math.hypot(hand.x - b.x, hand.y - b.y);
         if (d < tapRadius && d < targetDist) { target = b; targetDist = d; }
       });
-
-      // เปลี่ยนกล่องเป้าหมาย (หรือมือหลุดออกจากกล่อง) ให้เริ่มนับ progress การกำมือใหม่
-      if (!target || holdTargetId[key] !== target.id) {
-        holdTargetId[key] = target ? target.id : null;
-        holdProgress[key] = 0;
-      }
-
       if (!target) return;
-
-      // ต้อง "กำมือค้างไว้" บนกล่องเดิมให้ครบ HOLD_DURATION_MS ถึงจะถือว่ายืนยันการเลือก
-      if (isFist(landmarks)) {
-        holdProgress[key] = Math.min(1, holdProgress[key] + dt * HOLD_GROW_RATE);
-      } else {
-        holdProgress[key] = Math.max(0, holdProgress[key] - dt * HOLD_DECAY_RATE);
-      }
-
-      if (holdProgress[key] < 1) return;
-
-      holdProgress[key] = 0;
-      holdTargetId[key] = null;
 
       if (target.isCorrect) {
         score += 10;
@@ -665,28 +587,18 @@
         o.y = o.baseY + Math.cos(t * o.speed * speedMul * 0.8 + o.phase) * o.radiusY;
       });
 
-      const dt = lastFrameTime ? Math.min(80, now - lastFrameTime) : 16; // cap กัน dt กระโดดตอนกล้องกระตุก
-      lastFrameTime = now;
-
-      // อ่านผลจาก MediaPipe Hands: จุด landmark ครบ 21 จุดต่อมือ (แม่นยำกว่าประมาณจากโครงร่างร่างกาย)
-      // หมายเหตุ: เฟรมที่ส่งเข้าโมเดลไม่ได้ mirror ไว้ก่อน (mirror ทำที่ CSS ตอนแสดงผลเท่านั้น)
-      // ส่วน handedness ของ MediaPipe ตั้งสมมติฐานว่าภาพถูก mirror มา จึงอาจสลับป้ายซ้าย/ขวา
-      // จากมุมมองจริงของผู้เล่น แต่ไม่กระทบการเล่นเพราะมือทั้งสองข้างใช้ลอจิกเดียวกันทุกอย่าง
-      let rawLandmarks = { left: null, right: null };
-      if (results.multiHandLandmarks && results.multiHandedness) {
-        results.multiHandLandmarks.forEach(function (lm, i) {
-          const label = results.multiHandedness[i] ? results.multiHandedness[i].label : 'Right';
-          const key = label === 'Left' ? 'left' : 'right';
-          rawLandmarks[key] = lm;
-        });
+      let leftHand = null, rightHand = null;
+      if (results.poseLandmarks) {
+        // ใช้ปลายนิ้วชี้ (index fingertip) แทนข้อมือ เพื่อความแม่นยำที่มากขึ้น
+        leftHand = updateSmoothedHand('left', results.poseLandmarks[19]);
+        rightHand = updateSmoothedHand('right', results.poseLandmarks[20]);
+      } else {
+        updateSmoothedHand('left', null);
+        updateSmoothedHand('right', null);
       }
 
-      // ใช้ปลายนิ้วชี้ (landmark 8) เป็นตำแหน่งเคอร์เซอร์ของมือแต่ละข้าง
-      const leftHand = updateSmoothedHand('left', rawLandmarks.left ? rawLandmarks.left[8] : null);
-      const rightHand = updateSmoothedHand('right', rawLandmarks.right ? rawLandmarks.right[8] : null);
-
-      checkBoxTap('left', leftHand, rawLandmarks.left, dt);
-      checkBoxTap('right', rightHand, rawLandmarks.right, dt);
+      checkBoxTap('left', leftHand);
+      checkBoxTap('right', rightHand);
       checkObstacleHit('left', leftHand);
       checkObstacleHit('right', rightHand);
 
@@ -696,8 +608,8 @@
       drawParticles();
       drawFeedback();
 
-      if (leftHand) drawHandCursor(leftHand, 'cyan', holdProgress.left, isFist(rawLandmarks.left));
-      if (rightHand) drawHandCursor(rightHand, 'magenta', holdProgress.right, isFist(rawLandmarks.right));
+      if (leftHand) drawHandCursor(leftHand, 'cyan');
+      if (rightHand) drawHandCursor(rightHand, 'magenta');
 
       canvasCtx.restore();
     }
@@ -866,43 +778,19 @@
       drawMirroredText('!', cx, cy);
     }
 
-    function drawHandCursor(hand, color, progress, fisting) {
+    function drawHandCursor(hand, color) {
       const x = hand.x * canvasElement.width;
       const y = hand.y * canvasElement.height;
-      const baseR = fisting ? 13 : 16;
-
       canvasCtx.save();
       canvasCtx.beginPath();
-      canvasCtx.arc(x, y, baseR, 0, Math.PI * 2);
+      canvasCtx.arc(x, y, 16, 0, Math.PI * 2);
       canvasCtx.fillStyle = color;
-      canvasCtx.globalAlpha = fisting ? 1 : 0.9;
+      canvasCtx.globalAlpha = 0.9;
       canvasCtx.fill();
       canvasCtx.lineWidth = 3;
       canvasCtx.strokeStyle = 'white';
       canvasCtx.stroke();
       canvasCtx.restore();
-
-      // วง progress รอบเคอร์เซอร์ แสดงความคืบหน้าตอน "กำมือค้าง" เพื่อยืนยัน
-      if (progress > 0) {
-        canvasCtx.save();
-        canvasCtx.beginPath();
-        canvasCtx.lineWidth = 5;
-        canvasCtx.lineCap = 'round';
-        canvasCtx.strokeStyle = progress >= 0.99 ? '#7CFC00' : '#ffffff';
-        canvasCtx.arc(x, y, baseR + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
-        canvasCtx.stroke();
-        canvasCtx.restore();
-      }
-
-      if (fisting) {
-        canvasCtx.save();
-        canvasCtx.fillStyle = '#ffffff';
-        canvasCtx.font = "600 12px Kanit";
-        canvasCtx.shadowColor = 'rgba(0,0,0,0.6)';
-        canvasCtx.shadowBlur = 3;
-        drawMirroredText('กำค้าง...', x, y + baseR + 22);
-        canvasCtx.restore();
-      }
     }
 
     function drawParticles() {
@@ -938,14 +826,6 @@
       gameState = 'ended';
       clearInterval(timerInterval);
       if (camera) camera.stop();
-
-      if (isTestMode) {
-        // โหมดทดสอบ: ไม่มี returnUrl ให้กลับไป ก็แสดงคะแนนสรุปในหน้านี้แทนการ redirect
-        document.getElementById('game-screen').style.display = 'none';
-        document.getElementById('testScoreText').innerText = score;
-        document.getElementById('test-result-box').style.display = 'block';
-        return;
-      }
 
       const params = new URLSearchParams({
         page: 'result',
