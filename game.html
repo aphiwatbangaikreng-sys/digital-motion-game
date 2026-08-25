@@ -129,16 +129,7 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     }
     .calib-box h3 { margin: 0 0 6px; font-size: 16px; }
-    .calib-status { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
-    .calib-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; }
-    .calib-table td { padding: 4px 2px; border-bottom: 1px solid rgba(255,255,255,0.12); }
-    .calib-table td:last-child { text-align: right; font-family: monospace; font-weight: 700; }
-    #calibStartBtn {
-      width: 100%; padding: 12px; border: none; border-radius: 10px;
-      background: linear-gradient(90deg, #7c3aed, #06b6d4); color: #fff;
-      font-size: 15px; font-weight: 700; font-family: 'Kanit', sans-serif; cursor: pointer;
-    }
-    #calibStartBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .calib-status { margin: 0; font-size: 13px; font-weight: 600; }
   </style>
 </head>
 
@@ -154,15 +145,8 @@
       <p class="instructions" id="instructionsText">แตะกล่องคำตอบที่ถูกต้องด้วยมือให้ตรงกับคำสั่ง!</p>
 
       <div id="calibration-box" class="calib-box">
-        <h3>📏 ตรวจสอบตำแหน่งก่อนเริ่มเกม</h3>
+        <h3>📷 กำลังตรวจจับตำแหน่ง...</h3>
         <p id="calibStatusText" class="calib-status">กำลังตรวจจับ...</p>
-        <table class="calib-table">
-          <tr><td>ความกว้างไหล่ (shoulderWidth)</td><td id="calibShoulderWidth">-</td></tr>
-          <tr><td>จุดกึ่งกลางตัว X (centerX)</td><td id="calibCenterX">-</td></tr>
-          <tr><td>ค่าเบี่ยงจากกึ่งกลาง (offsetX)</td><td id="calibOffsetX">-</td></tr>
-          <tr><td>มองเห็นไหล่ชัดเจน</td><td id="calibVisibility">-</td></tr>
-        </table>
-        <button id="calibStartBtn" disabled>▶️ เริ่มเกม</button>
       </div>
     </div>
   </div>
@@ -272,8 +256,8 @@
       hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7
+        minDetectionConfidence: 0.75,
+        minTrackingConfidence: 0.75
       });
 
       hands.onResults(onResults);
@@ -288,8 +272,8 @@
       pose.setOptions({
         modelComplexity: 0,
         smoothLandmarks: true,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.3,
+        minTrackingConfidence: 0.3
       });
       pose.onResults(onPoseResults);
 
@@ -298,8 +282,8 @@
           await hands.send({ image: videoElement });
           await pose.send({ image: videoElement });
         },
-        width: 960,
-        height: 540
+        width: 1280,
+        height: 720
       });
 
       camera.start().then(function () {
@@ -331,9 +315,10 @@
       }, 1000);
     }
 
-    document.getElementById('calibStartBtn').addEventListener('click', function () {
-      if (!this.disabled) startGamePlay();
-    });
+    // ไม่ต้องกดปุ่มเริ่มเกมอีกต่อไป — แค่ยืนให้ตรวจจับเจอ (กรอบขึ้นสีเขียว) ค้างไว้สักครู่
+    // เกมจะเริ่มให้อัตโนมัติทันที (มีดีเลย์สั้นๆ กันกรอบเขียวติดๆ ดับๆ จากความไวของการตรวจจับ)
+    const AUTO_START_HOLD_MS = 600;
+    let calibOkSince = null;
 
     // คำนวณตำแหน่ง/ระยะห่างของผู้เล่นจากจุด landmark ไหล่ซ้าย-ขวา (index 11, 12) ของ Pose
     function computeBodyMetrics(lm) {
@@ -360,20 +345,13 @@
       too_close: '↩️ ใกล้กล้องเกินไป กรุณาถอยออกไปอีกหน่อย',
       too_far: '↪️ ไกล/ไม่ชัดเจน กรุณาขยับเข้ามาใกล้กล้องอีกนิด',
       off_center: '↔️ กรุณาขยับไปยืนตรงกลางเฟรม (ตรงหน้ากล้องพอดี)',
-      ok: '✅ ตำแหน่งพร้อมแล้ว! กดปุ่มเริ่มเกมได้เลย'
+      ok: '✅ พร้อมแล้ว! กำลังเริ่มเกม...'
     };
 
     function updateCalibrationUI(metrics) {
-      document.getElementById('calibShoulderWidth').innerText = metrics.shoulderWidth !== null ? metrics.shoulderWidth.toFixed(3) : '-';
-      document.getElementById('calibCenterX').innerText = metrics.centerX !== null ? metrics.centerX.toFixed(3) : '-';
-      document.getElementById('calibOffsetX').innerText = metrics.offsetX !== null ? metrics.offsetX.toFixed(3) : '-';
-      document.getElementById('calibVisibility').innerText = metrics.detected ? (metrics.visOk ? 'เห็นชัด' : 'ไม่ชัด/ไม่ครบ') : '-';
-
       const statusEl = document.getElementById('calibStatusText');
       statusEl.innerText = CALIB_STATUS_TEXT[metrics.status] || '';
       statusEl.style.color = metrics.status === 'ok' ? '#7CFC00' : '#ffd166';
-
-      document.getElementById('calibStartBtn').disabled = metrics.status !== 'ok';
     }
 
     // วาดกรอบล้อมรอบตัวคนบนภาพกล้อง (สไตล์กรอบตรวจจับ AI) จากจุด landmark ที่ Pose มองเห็นชัด
@@ -450,6 +428,17 @@
         canvasCtx.restore();
 
         updateCalibrationUI(metrics);
+
+        // ไม่ต้องกดปุ่ม — พอกรอบขึ้นสีเขียว (status 'ok') ค้างไว้สักครู่ ก็เริ่มเกมให้อัตโนมัติเลย
+        if (metrics.status === 'ok') {
+          if (calibOkSince === null) calibOkSince = performance.now();
+          else if (performance.now() - calibOkSince >= AUTO_START_HOLD_MS) {
+            calibOkSince = null;
+            startGamePlay();
+          }
+        } else {
+          calibOkSince = null;
+        }
       }
     }
 
@@ -712,8 +701,14 @@
       if (!smoothedHand[key]) {
         smoothedHand[key] = { x: landmark.x, y: landmark.y };
       } else {
-        smoothedHand[key].x = lerp(smoothedHand[key].x, landmark.x, 0.5);
-        smoothedHand[key].y = lerp(smoothedHand[key].y, landmark.y, 0.5);
+        // Smoothing แบบปรับตามความเร็ว (adaptive smoothing): มือขยับเร็ว -> ตามไว (ลด lag)
+        // มือนิ่งอยู่กับที่ (เล็งเป้าอยู่) -> กรองแรงขึ้น (ลดอาการสั่น/กระตุก) ทำให้เล็งกล่องได้แม่นยำขึ้นมาก
+        const dx = landmark.x - smoothedHand[key].x;
+        const dy = landmark.y - smoothedHand[key].y;
+        const speed = Math.hypot(dx, dy);
+        const t = Math.min(0.75, 0.25 + speed * 6);
+        smoothedHand[key].x = lerp(smoothedHand[key].x, landmark.x, t);
+        smoothedHand[key].y = lerp(smoothedHand[key].y, landmark.y, t);
       }
       return smoothedHand[key];
     }
@@ -721,6 +716,8 @@
     // ตรวจว่ามือ "กำ" อยู่หรือไม่ จากจุด landmark ทั้ง 21 จุดของมือข้างนั้น
     // หลักการ: นิ้วที่งอ/กำเข้าหาฝ่ามือ ปลายนิ้ว (tip) จะอยู่ใกล้ข้อมือ (wrist)
     // มากกว่าข้อกลางนิ้ว (pip) — เช็ค 4 นิ้ว (ชี้/กลาง/นาง/ก้อย) ถ้างออย่างน้อย 3 ใน 4 ถือว่ากำมือ
+    // เพิ่มการเช็คนิ้วโป้งเสริม (ปลายนิ้วโป้งหุบเข้าใกล้ฐานนิ้วก้อย) เพื่อความแม่นยำขึ้นอีกชั้น
+    // กรณีนิ้วหลักบางนิ้วถูกบัง/มองเห็นไม่ชัด ก็ยังตรวจจับกำมือได้ถูกต้องมากขึ้น
     function isFist(landmarks) {
       if (!landmarks) return false;
       const wrist = landmarks[0];
@@ -735,9 +732,12 @@
       fingers.forEach(function (f) {
         const tipDist = dist(landmarks[f.tip], wrist);
         const pipDist = dist(landmarks[f.pip], wrist);
-        if (tipDist < pipDist * 1.05) curled++;
+        if (tipDist < pipDist * 1.08) curled++;
       });
-      return curled >= 3;
+
+      const thumbCurled = dist(landmarks[4], landmarks[17]) < dist(landmarks[5], landmarks[17]) * 1.15;
+
+      return curled >= 3 || (curled >= 2 && thumbCurled);
     }
 
     function checkBoxTap(key, hand, landmarks, dt) {
