@@ -220,7 +220,7 @@
     let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
     let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
 
-    const HOLD_DURATION_MS = 385;                 // เวลาที่ต้องกำมือค้างบนกล่องเพื่อยืนยันการเลือก
+    const HOLD_DURATION_MS = 300;                 // เวลาที่ต้องกำมือค้างบนกล่องเพื่อยืนยันการเลือก
     const HOLD_GROW_RATE = 1 / HOLD_DURATION_MS;  // อัตราการเพิ่ม progress ต่อ ms ตอนกำมือค้าง
     const HOLD_DECAY_RATE = HOLD_GROW_RATE * 2.5; // อัตราการลด progress ต่อ ms ตอนคลายมือ (ลดเร็วกว่าตอนเพิ่ม)
 
