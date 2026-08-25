@@ -201,7 +201,7 @@
     let hands, camera, pose;
     let gameState = 'idle';
     let score = 0;
-    let timeLeft = 30;
+    let timeLeft = 60;
     let timerInterval;
     let isCooldown = false;
     let currentPrompt = {};
@@ -318,7 +318,7 @@
       document.getElementById('calibration-box').style.display = 'none';
       gameState = 'playing';
       score = 0;
-      timeLeft = 30;
+      timeLeft = 60;
       roundNumber = 0;
       startTime = performance.now();
       updateTimeDisplay();
