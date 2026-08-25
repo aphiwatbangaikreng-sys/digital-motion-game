@@ -168,7 +168,7 @@
   </div>
 
   <div id="error-box" class="info-box">
-    <h3>⚠️ ไม่สามารถเข้าถึงกล้องได้</h3>
+    <h3 id="error-title">⚠️ ไม่สามารถเข้าถึงกล้องได้</h3>
     <p id="error-message"></p>
     <button onclick="window.close()">ปิดแท็บนี้</button>
   </div>
@@ -220,7 +220,7 @@
     let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
     let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
 
-    const HOLD_DURATION_MS = 300;                 // เวลาที่ต้องกำมือค้างบนกล่องเพื่อยืนยันการเลือก
+    const HOLD_DURATION_MS = 385;                 // เวลาที่ต้องกำมือค้างบนกล่องเพื่อยืนยันการเลือก
     const HOLD_GROW_RATE = 1 / HOLD_DURATION_MS;  // อัตราการเพิ่ม progress ต่อ ms ตอนกำมือค้าง
     const HOLD_DECAY_RATE = HOLD_GROW_RATE * 2.5; // อัตราการลด progress ต่อ ms ตอนคลายมือ (ลดเร็วกว่าตอนเพิ่ม)
 
@@ -241,14 +241,24 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    function showError(msg) {
+    function showError(msg, title) {
       document.getElementById('game-screen').style.display = 'none';
       const box = document.getElementById('error-box');
       box.style.display = 'block';
+      document.getElementById('error-title').innerText = title || '⚠️ ไม่สามารถเข้าถึงกล้องได้';
       document.getElementById('error-message').innerText = msg;
     }
 
-    initMediaPipe();
+    // บังคับต้องมีรหัสพนักงานก่อนเข้าเล่น (กันกรณีมีคนเปิดลิงก์หน้าเกมตรงๆ
+    // โดยไม่ผ่านฟอร์มหน้าแรก ซึ่งจะไม่มี ?empId=... แนบมาด้วย)
+    if (!pEmpId.trim()) {
+      showError(
+        'ไม่พบรหัสพนักงานในลิงก์นี้ กรุณาปิดแท็บนี้แล้วกลับไปกรอกชื่อและรหัสพนักงานที่หน้าแรกก่อนเริ่มเล่น',
+        '🪪 กรุณากรอกรหัสพนักงานก่อนเล่น'
+      );
+    } else {
+      initMediaPipe();
+    }
 
     function initMediaPipe() {
       // ใช้ MediaPipe Hands แทน Pose: ให้จุด landmark ของมือ 21 จุด/ข้าง (ปลายนิ้ว/ข้อนิ้วครบ)
