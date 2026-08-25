@@ -117,13 +117,14 @@
     const canvasCtx = canvasElement.getContext('2d');
     const videoElement = document.getElementById('video');
 
-    // ค่าเหล่านี้ถูกฉีดจาก code.js (doGet) ผ่าน HtmlService template
-    // แทนการอ่านจาก URLSearchParams เอง เพื่อให้ทำงานถูกต้องแม้ Apps Script
-    // จะเสิร์ฟหน้านี้ผ่าน iframe wrapper ภายในของตัวเอง
-    const pName = <?!= JSON.stringify(playerName) ?>;
-    const pEmpId = <?!= JSON.stringify(empId) ?>;
-    const currentMode = <?!= JSON.stringify(mode) ?>;
-    const returnUrl = <?!= JSON.stringify(returnUrl) ?>;
+    // เปลี่ยนจากการรับค่าแบบ Apps Script template
+    //   มาเป็นอ่านจาก URL query string ตรง ๆ เพราะไฟล์นี้ถูกโฮสต์แยกต่างหาก
+    //   (ไม่ได้รันผ่าน HtmlService ของ Apps Script อีกต่อไป)
+    const urlParams = new URLSearchParams(window.location.search);
+    const pName = urlParams.get('name') || 'ผู้เล่น';
+    const pEmpId = urlParams.get('empId') || '';
+    const currentMode = urlParams.get('mode') || 'color';
+    const returnUrl = urlParams.get('returnUrl') || '';
 
     let pose, camera;
     let gameState = 'idle';
@@ -332,7 +333,8 @@
       clearInterval(timerInterval);
       if (camera) camera.stop();
 
-      // นำทางแท็บนี้ (ที่เปิดจาก window.open) ไปหน้าแสดงผลคะแนน/Leaderboard
+      // นำทางแท็บนี้กลับไปหน้า Apps Script (returnUrl) เพื่อแสดงผลคะแนน/Leaderboard
+      // เป็นการ redirect ธรรมดา (ไม่ใช่ fetch) จึงไม่ติดปัญหา CORS แม้ข้ามโดเมน
       const params = new URLSearchParams({
         page: 'result',
         score: score,
