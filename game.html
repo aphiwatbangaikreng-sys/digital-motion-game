@@ -7,7 +7,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;700&display=swap');
 
     html, body {
       margin: 0;
@@ -53,23 +53,30 @@
 
     .hud {
       position: absolute;
-      top: 10px;
+      top: 14px;
       width: 100%;
       display: flex;
       justify-content: space-between;
       padding: 0 20px;
       box-sizing: border-box;
       z-index: 10;
-      font-size: clamp(18px, 3vw, 28px);
-      font-weight: bold;
-      color: white;
-      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
       pointer-events: none;
+    }
+
+    .hud-pill {
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-size: clamp(16px, 2.6vw, 24px);
+      font-weight: 700;
+      color: #fff;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.3);
     }
 
     .instructions {
       position: absolute;
-      bottom: 12px;
+      bottom: 14px;
       width: 100%;
       text-align: center;
       color: white;
@@ -108,12 +115,12 @@
   <div id="game-screen">
     <div id="game-container">
       <div class="hud">
-        <div id="scoreDisplay">คะแนน: 0</div>
-        <div id="timeDisplay">เวลา: 30</div>
+        <div id="scoreDisplay" class="hud-pill">คะแนน: 0</div>
+        <div id="timeDisplay" class="hud-pill">เวลา: 30</div>
       </div>
       <video id="video" autoplay playsinline></video>
       <canvas id="output_canvas"></canvas>
-      <p class="instructions">ขยับมือ (ซ้ายหรือขวา) ไปแตะที่กล่องคำตอบที่ถูกต้อง!</p>
+      <p class="instructions">จับกล่องคำตอบที่ถูกต้องด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ!</p>
     </div>
   </div>
 
@@ -128,7 +135,6 @@
     const canvasCtx = canvasElement.getContext('2d');
     const videoElement = document.getElementById('video');
 
-    // อ่านค่าจาก URL query string (หน้านี้โฮสต์แยกจาก Apps Script)
     const urlParams = new URLSearchParams(window.location.search);
     const pName = urlParams.get('name') || 'ผู้เล่น';
     const pEmpId = urlParams.get('empId') || '';
@@ -142,28 +148,16 @@
     let timerInterval;
     let isCooldown = false;
     let currentPrompt = {};
+    let startTime = performance.now();
 
-    // ตำแหน่งกล่องคำตอบ 4 ตำแหน่ง (สัดส่วนของจอ) — จะถูกสุ่มสลับให้แต่ละรอบ
-    const boxPositions = [
-      { x: 0.04, y: 0.32, w: 0.20, h: 0.20 },
-      { x: 0.76, y: 0.32, w: 0.20, h: 0.20 },
-      { x: 0.22, y: 0.68, w: 0.20, h: 0.20 },
-      { x: 0.56, y: 0.68, w: 0.20, h: 0.20 }
-    ];
+    let floatingBoxes = [];   // กล่องคำตอบที่ลอยไปมา รอบปัจจุบัน
+    let heldBy = { left: null, right: null }; // id ของกล่องที่มือซ้าย/ขวากำลังจับอยู่
+    let smoothedHand = { left: null, right: null }; // ตำแหน่งมือแบบ smoothing กันกระตุก
+    let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
+    let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
 
-    // เก็บกล่องคำตอบของรอบปัจจุบัน (ตำแหน่ง + เนื้อหา ถูกสุ่มรวมกันใหม่ทุกรอบ)
-    let currentBoxes = [];
-
-    function shuffle(array) {
-      const a = array.slice();
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const tmp = a[i];
-        a[i] = a[j];
-        a[j] = tmp;
-      }
-      return a;
-    }
+    const CENTER_ZONE = { x: 0.5, y: 0.55, r: 0.11 }; // วงกลมเป้าหมายกลางจอ (สัดส่วนของ min(w,h))
+    const GRAB_RADIUS = 0.10; // ระยะที่มือต้องเข้าใกล้กล่องถึงจะ "จับ" ได้ (สัดส่วนของ min(w,h))
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -192,12 +186,13 @@
         }
       });
 
+      // เพิ่มความแม่นยำ: threshold สูงขึ้นเพื่อลด false positive
       pose.setOptions({
         modelComplexity: 1,
         smoothLandmarks: true,
         enableSegmentation: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       });
 
       pose.onResults(onResults);
@@ -206,14 +201,15 @@
         onFrame: async function () {
           await pose.send({ image: videoElement });
         },
-        width: 1280,
-        height: 720
+        width: 960,
+        height: 540
       });
 
       camera.start().then(function () {
         gameState = 'playing';
         score = 0;
         timeLeft = 30;
+        startTime = performance.now();
         generateNewPrompt();
 
         timerInterval = setInterval(function () {
@@ -229,15 +225,59 @@
       });
     }
 
+    // สีสันหลากหลายสำหรับโหมด factory (เดิมเป็นสีเทาล้วน)
+    const TOOL_COLOR_MAP = {
+      ERP: '#8e44ad',
+      SCADA: '#16a085',
+      IoT: '#e67e22',
+      MES: '#d63384'
+    };
+
+    function randRange(min, max) { return min + Math.random() * (max - min); }
+
+    function placeFloatingBoxes(defs) {
+      const placed = [];
+      defs.forEach(function (def, i) {
+        let bx, by, tries = 0;
+        do {
+          bx = randRange(0.14, 0.86);
+          by = randRange(0.30, 0.86);
+          tries++;
+        } while (
+          tries < 30 &&
+          (Math.hypot(bx - CENTER_ZONE.x, by - CENTER_ZONE.y) < CENTER_ZONE.r + 0.14 ||
+            placed.some(function (p) { return Math.hypot(bx - p.baseX, by - p.baseY) < 0.26; }))
+        );
+
+        placed.push(Object.assign({
+          id: 'box_' + i + '_' + Date.now(),
+          baseX: bx,
+          baseY: by,
+          radiusX: randRange(0.05, 0.10),
+          radiusY: randRange(0.05, 0.10),
+          speed: randRange(0.4, 0.8),
+          phase: randRange(0, Math.PI * 2),
+          x: bx,
+          y: by,
+          w: 0.15,
+          h: 0.15,
+          heldBy: null
+        }, def));
+      });
+      return placed;
+    }
+
     function generateNewPrompt() {
-      const shuffledPositions = shuffle(boxPositions);
+      heldBy = { left: null, right: null };
+      particles = [];
+      feedback = null;
 
       if (currentMode === 'color') {
         const colorDefs = [
-          { color: 'red', label: 'สีแดง' },
-          { color: '#00FF00', label: 'สีเขียว' },
-          { color: 'blue', label: 'สีน้ำเงิน' },
-          { color: 'yellow', label: 'สีเหลือง' }
+          { color: '#e74c3c', label: 'สีแดง' },
+          { color: '#2ecc71', label: 'สีเขียว' },
+          { color: '#3498db', label: 'สีน้ำเงิน' },
+          { color: '#f1c40f', label: 'สีเหลือง' }
         ];
 
         const targetIndex = Math.floor(Math.random() * colorDefs.length);
@@ -249,19 +289,12 @@
         currentPrompt = {
           text: colorDefs[targetIndex].label,
           bgColor: colorDefs[fakeColorIndex].color,
-          textColor: 'black'
+          textColor: 'white'
         };
 
-        currentBoxes = colorDefs.map(function (c, i) {
-          return {
-            color: c.color,
-            isCorrect: i === targetIndex,
-            x: shuffledPositions[i].x,
-            y: shuffledPositions[i].y,
-            w: shuffledPositions[i].w,
-            h: shuffledPositions[i].h
-          };
-        });
+        floatingBoxes = placeFloatingBoxes(colorDefs.map(function (c, i) {
+          return { color: c.color, isCorrect: i === targetIndex };
+        }));
       } else {
         const toolDefs = [
           { tool: 'ERP', question: 'ระบบวางแผนทรัพยากร' },
@@ -278,15 +311,91 @@
           textColor: 'white'
         };
 
-        currentBoxes = toolDefs.map(function (t, i) {
-          return {
-            tool: t.tool,
-            isCorrect: i === targetIndex,
-            x: shuffledPositions[i].x,
-            y: shuffledPositions[i].y,
-            w: shuffledPositions[i].w,
-            h: shuffledPositions[i].h
-          };
+        floatingBoxes = placeFloatingBoxes(toolDefs.map(function (t, i) {
+          return { tool: t.tool, color: TOOL_COLOR_MAP[t.tool], isCorrect: i === targetIndex };
+        }));
+      }
+    }
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function updateSmoothedHand(key, landmark) {
+      if (!landmark) {
+        smoothedHand[key] = null;
+        return null;
+      }
+      if (!smoothedHand[key]) {
+        smoothedHand[key] = { x: landmark.x, y: landmark.y };
+      } else {
+        smoothedHand[key].x = lerp(smoothedHand[key].x, landmark.x, 0.5);
+        smoothedHand[key].y = lerp(smoothedHand[key].y, landmark.y, 0.5);
+      }
+      return smoothedHand[key];
+    }
+
+    function updateHandInteraction(key, hand) {
+      if (!hand) {
+        if (heldBy[key]) {
+          const b = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
+          if (b) b.heldBy = null;
+          heldBy[key] = null;
+        }
+        return;
+      }
+
+      if (!heldBy[key]) {
+        let best = null, bestDist = Infinity;
+        floatingBoxes.forEach(function (b) {
+          if (b.heldBy) return;
+          const d = Math.hypot(hand.x - b.x, hand.y - b.y);
+          if (d < GRAB_RADIUS && d < bestDist) { best = b; bestDist = d; }
+        });
+        if (best) {
+          best.heldBy = key;
+          heldBy[key] = best.id;
+        }
+      } else {
+        const box = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
+        if (!box) { heldBy[key] = null; return; }
+
+        box.x = lerp(box.x, hand.x, 0.55);
+        box.y = lerp(box.y, hand.y, 0.55);
+
+        const distToCenter = Math.hypot(box.x - CENTER_ZONE.x, box.y - CENTER_ZONE.y);
+        if (distToCenter < CENTER_ZONE.r && !isCooldown) {
+          if (box.isCorrect) {
+            score += 10;
+            document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
+            spawnParticles(CENTER_ZONE.x, CENTER_ZONE.y, box.color || '#fff');
+            isCooldown = true;
+            heldBy[key] = null;
+            setTimeout(function () {
+              isCooldown = false;
+              generateNewPrompt();
+            }, 500);
+          } else {
+            feedback = { text: 'ยังไม่ใช่กล่องนี้นะ ลองใหม่!', timer: 60 };
+            const angle = Math.atan2(box.y - CENTER_ZONE.y, box.x - CENTER_ZONE.x) || Math.random() * Math.PI * 2;
+            box.baseX = Math.min(0.86, Math.max(0.14, CENTER_ZONE.x + Math.cos(angle) * 0.3));
+            box.baseY = Math.min(0.86, Math.max(0.30, CENTER_ZONE.y + Math.sin(angle) * 0.3));
+            box.x = box.baseX;
+            box.y = box.baseY;
+            box.heldBy = null;
+            heldBy[key] = null;
+          }
+        }
+      }
+    }
+
+    function spawnParticles(cx, cy, color) {
+      for (let i = 0; i < 24; i++) {
+        const angle = (i / 24) * Math.PI * 2;
+        particles.push({
+          x: cx, y: cy,
+          vx: Math.cos(angle) * randRange(0.003, 0.008),
+          vy: Math.sin(angle) * randRange(0.003, 0.008),
+          life: 40,
+          color: color
         });
       }
     }
@@ -294,31 +403,48 @@
     function onResults(results) {
       if (gameState !== 'playing') return;
 
+      const now = performance.now();
+      const t = (now - startTime) / 1000;
+      const minDim = Math.min(canvasElement.width, canvasElement.height);
+
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.fillStyle = 'rgba(0,0,0,0.15)';
+      canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
-      drawPromptBox();
-      drawTargetBoxes();
+      floatingBoxes.forEach(function (b) {
+        if (!b.heldBy) {
+          b.x = b.baseX + Math.sin(t * b.speed + b.phase) * b.radiusX;
+          b.y = b.baseY + Math.cos(t * b.speed * 0.8 + b.phase) * b.radiusY;
+        }
+      });
 
+      let leftHand = null, rightHand = null;
       if (results.poseLandmarks) {
-        const leftWrist = results.poseLandmarks[15];
-        const rightWrist = results.poseLandmarks[16];
-
-        if (leftWrist) {
-          drawPoint(leftWrist.x, leftWrist.y, 'cyan');
-          checkCollision(leftWrist);
-        }
-        if (rightWrist) {
-          drawPoint(rightWrist.x, rightWrist.y, 'magenta');
-          checkCollision(rightWrist);
-        }
+        // ใช้ปลายนิ้วชี้ (index fingertip) แทนข้อมือ เพื่อความแม่นยำที่มากขึ้น
+        leftHand = updateSmoothedHand('left', results.poseLandmarks[19]);
+        rightHand = updateSmoothedHand('right', results.poseLandmarks[20]);
+      } else {
+        updateSmoothedHand('left', null);
+        updateSmoothedHand('right', null);
       }
+
+      updateHandInteraction('left', leftHand);
+      updateHandInteraction('right', rightHand);
+
+      drawCenterZone(t, minDim);
+      drawPromptBox();
+      floatingBoxes.forEach(function (b) { drawBox(b, minDim); });
+      drawParticles();
+      drawFeedback();
+
+      if (leftHand) drawHandCursor(leftHand, 'cyan');
+      if (rightHand) drawHandCursor(rightHand, 'magenta');
+
       canvasCtx.restore();
     }
 
-    // วาดข้อความแบบ "กลับด้านสวนทาง" ล่วงหน้า เพราะทั้ง canvas ถูก mirror ด้วย CSS (transform: scaleX(-1))
-    // ถ้าวาดตัวหนังสือแบบปกติ มันจะกลับด้านตอนแสดงผลจริง ต้อง flip ที่นี่อีกทีเพื่อหักล้างกัน
     function drawMirroredText(text, cx, cy) {
       canvasCtx.save();
       canvasCtx.textAlign = "center";
@@ -329,68 +455,129 @@
       canvasCtx.restore();
     }
 
+    function roundRectPath(x, y, w, h, r) {
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(x + r, y);
+      canvasCtx.arcTo(x + w, y, x + w, y + h, r);
+      canvasCtx.arcTo(x + w, y + h, x, y + h, r);
+      canvasCtx.arcTo(x, y + h, x, y, r);
+      canvasCtx.arcTo(x, y, x + w, y, r);
+      canvasCtx.closePath();
+    }
+
     function drawPromptBox() {
-      const boxW = Math.min(420, canvasElement.width * 0.5);
+      const boxW = Math.min(440, canvasElement.width * 0.55);
       const boxH = Math.max(70, canvasElement.height * 0.09);
       const boxX = (canvasElement.width / 2) - (boxW / 2);
-      const boxY = canvasElement.height * 0.05;
+      const boxY = canvasElement.height * 0.04;
 
+      canvasCtx.save();
+      canvasCtx.shadowColor = 'rgba(0,0,0,0.4)';
+      canvasCtx.shadowBlur = 12;
       canvasCtx.fillStyle = currentPrompt.bgColor;
-      canvasCtx.fillRect(boxX, boxY, boxW, boxH);
+      roundRectPath(boxX, boxY, boxW, boxH, 18);
+      canvasCtx.fill();
+      canvasCtx.restore();
 
       canvasCtx.fillStyle = currentPrompt.textColor;
-      canvasCtx.font = "bold " + Math.round(boxH * 0.4) + "px Kanit";
+      canvasCtx.font = "bold " + Math.round(boxH * 0.38) + "px Kanit";
       drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
     }
 
-    function drawTargetBoxes() {
-      currentBoxes.forEach(function (box) {
-        const x = box.x * canvasElement.width;
-        const y = box.y * canvasElement.height;
-        const w = box.w * canvasElement.width;
-        const h = box.h * canvasElement.height;
+    function drawCenterZone(t, minDim) {
+      const cx = CENTER_ZONE.x * canvasElement.width;
+      const cy = CENTER_ZONE.y * canvasElement.height;
+      const r = CENTER_ZONE.r * minDim * (1 + Math.sin(t * 3) * 0.04);
 
-        canvasCtx.fillStyle = currentMode === 'color' ? box.color : '#e0e0e0';
-        canvasCtx.fillRect(x, y, w, h);
-
-        if (currentMode === 'factory') {
-          canvasCtx.fillStyle = '#333';
-          canvasCtx.font = "bold 24px Kanit";
-          drawMirroredText(box.tool, x + w / 2, y + h / 2);
-        }
-      });
-    }
-
-    function drawPoint(normX, normY, color) {
-      if (!normX || !normY) return;
-      const x = normX * canvasElement.width;
-      const y = normY * canvasElement.height;
+      canvasCtx.save();
+      canvasCtx.setLineDash([10, 8]);
+      canvasCtx.lineWidth = 4;
+      canvasCtx.strokeStyle = 'rgba(255,255,255,0.85)';
       canvasCtx.beginPath();
-      canvasCtx.arc(x, y, 15, 0, 2 * Math.PI);
-      canvasCtx.fillStyle = color;
+      canvasCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      canvasCtx.stroke();
+      canvasCtx.setLineDash([]);
+      canvasCtx.fillStyle = 'rgba(255,255,255,0.12)';
+      canvasCtx.beginPath();
+      canvasCtx.arc(cx, cy, r, 0, Math.PI * 2);
       canvasCtx.fill();
+      canvasCtx.restore();
+
+      canvasCtx.fillStyle = 'rgba(255,255,255,0.9)';
+      canvasCtx.font = "bold " + Math.round(minDim * 0.03) + "px Kanit";
+      drawMirroredText('วางตรงนี้', cx, cy);
     }
 
-    function checkCollision(wrist) {
-      if (!wrist || isCooldown) return;
+    function drawBox(b, minDim) {
+      const x = b.x * canvasElement.width - (b.w * minDim) / 2;
+      const y = b.y * canvasElement.height - (b.h * minDim) / 2;
+      const w = b.w * minDim;
+      const h = b.h * minDim;
 
-      const handX = wrist.x;
-      const handY = wrist.y;
+      canvasCtx.save();
+      canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
+      canvasCtx.shadowBlur = b.heldBy ? 22 : 10;
+      canvasCtx.fillStyle = b.color;
+      roundRectPath(x, y, w, h, 16);
+      canvasCtx.fill();
 
-      currentBoxes.forEach(function (box) {
-        if (handX >= box.x && handX <= box.x + box.w &&
-          handY >= box.y && handY <= box.y + box.h) {
+      if (b.heldBy) {
+        canvasCtx.lineWidth = 4;
+        canvasCtx.strokeStyle = 'white';
+        roundRectPath(x, y, w, h, 16);
+        canvasCtx.stroke();
+      }
+      canvasCtx.restore();
 
-          if (box.isCorrect) {
-            score += 10;
-            document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
-            isCooldown = true;
-            generateNewPrompt();
+      if (currentMode === 'factory' && b.tool) {
+        canvasCtx.fillStyle = 'white';
+        canvasCtx.font = "bold " + Math.round(h * 0.22) + "px Kanit";
+        drawMirroredText(b.tool, x + w / 2, y + h / 2);
+      }
+    }
 
-            setTimeout(function () { isCooldown = false; }, 500);
-          }
-        }
+    function drawHandCursor(hand, color) {
+      const x = hand.x * canvasElement.width;
+      const y = hand.y * canvasElement.height;
+      canvasCtx.save();
+      canvasCtx.beginPath();
+      canvasCtx.arc(x, y, 16, 0, Math.PI * 2);
+      canvasCtx.fillStyle = color;
+      canvasCtx.globalAlpha = 0.9;
+      canvasCtx.fill();
+      canvasCtx.lineWidth = 3;
+      canvasCtx.strokeStyle = 'white';
+      canvasCtx.stroke();
+      canvasCtx.restore();
+    }
+
+    function drawParticles() {
+      particles = particles.filter(function (p) { return p.life > 0; });
+      particles.forEach(function (p) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 1;
+        canvasCtx.save();
+        canvasCtx.globalAlpha = Math.max(0, p.life / 40);
+        canvasCtx.fillStyle = p.color;
+        canvasCtx.beginPath();
+        canvasCtx.arc(p.x * canvasElement.width, p.y * canvasElement.height, 6, 0, Math.PI * 2);
+        canvasCtx.fill();
+        canvasCtx.restore();
       });
+    }
+
+    function drawFeedback() {
+      if (!feedback) return;
+      feedback.timer -= 1;
+      if (feedback.timer <= 0) { feedback = null; return; }
+
+      canvasCtx.save();
+      canvasCtx.globalAlpha = Math.min(1, feedback.timer / 20);
+      canvasCtx.fillStyle = '#ff4d4d';
+      canvasCtx.font = "bold " + Math.round(canvasElement.height * 0.035) + "px Kanit";
+      drawMirroredText(feedback.text, canvasElement.width / 2, canvasElement.height * (CENTER_ZONE.y + CENTER_ZONE.r + 0.08));
+      canvasCtx.restore();
     }
 
     function endGame() {
