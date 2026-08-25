@@ -122,7 +122,7 @@
       </div>
       <video id="video" autoplay playsinline></video>
       <canvas id="output_canvas"></canvas>
-      <p class="instructions" id="instructionsText">จับกล่องคำตอบที่ถูกต้องด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ!</p>
+      <p class="instructions" id="instructionsText">แตะกล่องคำตอบที่ถูกต้องด้วยมือให้ตรงกับคำสั่ง!</p>
     </div>
   </div>
 
@@ -144,9 +144,9 @@
     const returnUrl = urlParams.get('returnUrl') || '';
 
     const INSTRUCTIONS = {
-      color: 'จับ "กล่องสี" ที่ตรงกับคำสั่งด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ',
-      factory: 'จับ "กล่องเครื่องมือ" ที่ตรงกับคำสั่งด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ',
-      shape: 'จับ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสีด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ'
+      color: 'แตะ "กล่องสี" ที่ตรงกับคำสั่งด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      factory: 'แตะ "กล่องเครื่องมือ" ที่ตรงกับคำสั่งด้วยมือ! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      shape: 'แตะ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสีด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
     };
     document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
 
@@ -163,7 +163,8 @@
     let floatingBoxes = [];   // กล่องคำตอบที่ลอยไปมา รอบปัจจุบัน
     let obstacles = [];       // สิ่งกีดขวาง (แตะแล้วโดนหักคะแนน)
     let obstacleCooldown = { left: 0, right: 0 };
-    let heldBy = { left: null, right: null }; // id ของกล่องที่มือซ้าย/ขวากำลังจับอยู่
+    let tapCooldown = { left: 0, right: 0 }; // กันแตะซ้ำรัวๆ หลังแตะผิด (เฟรม)
+    let hoverId = { left: null, right: null }; // id กล่องที่มือกำลังอยู่ใกล้ๆ (ใช้ทำ highlight)
     let smoothedHand = { left: null, right: null }; // ตำแหน่งมือแบบ smoothing กันกระตุก
     let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
     let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
@@ -309,6 +310,11 @@
       return Math.max(0.075, 0.115 - (count - 4) * 0.004);
     }
 
+    // ยิ่งเล่นไปหลายรอบ กล่อง/สิ่งกีดขวางยิ่งขยับไวขึ้น (จำกัดเพดานไว้ไม่ให้ไวเกินไป)
+    function speedMultiplierForRound(round) {
+      return Math.min(1.7, 1 + Math.max(0, round - 1) * 0.035);
+    }
+
     // ---------- วางกล่อง/สิ่งของแบบไม่ให้ทับกัน ----------
     function placeItems(defs, extraAvoid) {
       const placed = (extraAvoid || []).slice();
@@ -330,15 +336,14 @@
           baseX: bx,
           baseY: by,
           selfR: selfR,
-          radiusX: randRange(0.02, 0.05),
-          radiusY: randRange(0.02, 0.05),
-          speed: randRange(0.35, 0.75),
+          radiusX: randRange(0.035, 0.075),
+          radiusY: randRange(0.035, 0.075),
+          speed: randRange(0.65, 1.25),
           phase: randRange(0, Math.PI * 2),
           x: bx,
           y: by,
           w: w,
-          h: h,
-          heldBy: null
+          h: h
         }, def);
 
         placed.push(item);
@@ -354,15 +359,15 @@
         defs.push({ w: 0.14, h: 0.14, isObstacle: true });
       }
       obstacles = placeItems(defs, avoidBoxes).map(function (o) {
-        o.radiusX = randRange(0.04, 0.08);
-        o.radiusY = randRange(0.04, 0.08);
-        o.speed = randRange(0.5, 0.9);
+        o.radiusX = randRange(0.05, 0.095);
+        o.radiusY = randRange(0.05, 0.095);
+        o.speed = randRange(0.8, 1.4);
         return o;
       });
     }
 
     function generateNewPrompt() {
-      heldBy = { left: null, right: null };
+      hoverId = { left: null, right: null };
       particles = [];
       feedback = null;
       roundNumber++;
@@ -381,8 +386,11 @@
 
         const sizeBase = baseSizeForCount(count);
         floatingBoxes = placeItems(pool.map(function (c, i) {
+          // เขียนชื่อสีลงบนกล่อง แต่จงใจให้ "ไม่ตรง" กับสีจริงของกล่องเสมอ (Stroop effect)
+          const wrongLabelIdx = randIntDiff(pool.length, i);
           return {
             color: c.color,
+            label: pool[wrongLabelIdx].label,
             isCorrect: i === targetIndex,
             w: sizeBase * randRange(0.75, 1.3),
             h: sizeBase * randRange(0.75, 1.3)
@@ -427,9 +435,12 @@
 
         const sizeBase = baseSizeForCount(count);
         floatingBoxes = placeItems(shuffle(combos).map(function (c) {
+          // เขียนชื่อสีลงบนรูปทรง แต่จงใจให้ "ไม่ตรง" กับสีจริงของรูปทรงเสมอ (เพิ่มความสับสน)
+          const wrongColorIdx = randIntDiff(COLOR_POOL.length, c.colorIdx);
           return {
             shape: SHAPES[c.shapeIdx].key,
             color: COLOR_POOL[c.colorIdx].color,
+            label: COLOR_POOL[wrongColorIdx].label,
             isCorrect: c.isCorrect,
             w: sizeBase * randRange(0.8, 1.25),
             h: sizeBase * randRange(0.8, 1.25)
@@ -483,59 +494,42 @@
       return smoothedHand[key];
     }
 
-    function updateHandInteraction(key, hand) {
-      if (!hand) {
-        if (heldBy[key]) {
-          const b = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
-          if (b) b.heldBy = null;
-          heldBy[key] = null;
-        }
-        return;
-      }
+    function checkBoxTap(key, hand) {
+      if (!hand) { hoverId[key] = null; return; }
 
-      const grabRadius = grabRadiusForCount(floatingBoxes.length);
+      const tapRadius = grabRadiusForCount(floatingBoxes.length);
 
-      if (!heldBy[key]) {
-        let best = null, bestDist = Infinity;
-        floatingBoxes.forEach(function (b) {
-          if (b.heldBy) return;
-          const d = Math.hypot(hand.x - b.x, hand.y - b.y);
-          if (d < grabRadius && d < bestDist) { best = b; bestDist = d; }
-        });
-        if (best) {
-          best.heldBy = key;
-          heldBy[key] = best.id;
-        }
+      // หา "กล่องที่ใกล้มือที่สุด" ไว้ทำ highlight เสมอ (แม้ยังไม่ถึงระยะแตะ)
+      let nearest = null, nearestDist = Infinity;
+      floatingBoxes.forEach(function (b) {
+        const d = Math.hypot(hand.x - b.x, hand.y - b.y);
+        if (d < tapRadius * 1.5 && d < nearestDist) { nearest = b; nearestDist = d; }
+      });
+      hoverId[key] = nearest ? nearest.id : null;
+
+      if (isCooldown) return;          // กำลังรอรอบถัดไปหลังแตะถูก
+      if (tapCooldown[key] > 0) { tapCooldown[key]--; return; } // กันแตะรัวหลังแตะผิด
+
+      // หากล่องที่มืออยู่ในระยะแตะจริงๆ (ใกล้กว่า nearest ด้านบน)
+      let target = null, targetDist = Infinity;
+      floatingBoxes.forEach(function (b) {
+        const d = Math.hypot(hand.x - b.x, hand.y - b.y);
+        if (d < tapRadius && d < targetDist) { target = b; targetDist = d; }
+      });
+      if (!target) return;
+
+      if (target.isCorrect) {
+        score += 10;
+        document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
+        spawnParticles(target.x, target.y, target.color || '#fff');
+        isCooldown = true;
+        setTimeout(function () {
+          isCooldown = false;
+          generateNewPrompt();
+        }, 350);
       } else {
-        const box = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
-        if (!box) { heldBy[key] = null; return; }
-
-        box.x = lerp(box.x, hand.x, 0.55);
-        box.y = lerp(box.y, hand.y, 0.55);
-
-        const distToCenter = Math.hypot(box.x - CENTER_ZONE.x, box.y - CENTER_ZONE.y);
-        if (distToCenter < CENTER_ZONE.r && !isCooldown) {
-          if (box.isCorrect) {
-            score += 10;
-            document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
-            spawnParticles(CENTER_ZONE.x, CENTER_ZONE.y, box.color || '#fff');
-            isCooldown = true;
-            heldBy[key] = null;
-            setTimeout(function () {
-              isCooldown = false;
-              generateNewPrompt();
-            }, 500);
-          } else {
-            feedback = { text: 'ยังไม่ใช่กล่องนี้นะ ลองใหม่!', timer: 60, color: '#ff4d4d' };
-            const angle = Math.atan2(box.y - CENTER_ZONE.y, box.x - CENTER_ZONE.x) || Math.random() * Math.PI * 2;
-            box.baseX = Math.min(0.86, Math.max(0.14, CENTER_ZONE.x + Math.cos(angle) * 0.3));
-            box.baseY = Math.min(0.86, Math.max(0.30, CENTER_ZONE.y + Math.sin(angle) * 0.3));
-            box.x = box.baseX;
-            box.y = box.baseY;
-            box.heldBy = null;
-            heldBy[key] = null;
-          }
-        }
+        feedback = { text: 'ยังไม่ใช่กล่องนี้นะ ลองใหม่!', timer: 50, color: '#ff4d4d' };
+        tapCooldown[key] = 30;
       }
     }
 
@@ -551,12 +545,6 @@
           feedback = { text: '⚠️ โดนสิ่งกีดขวาง! -5 คะแนน', timer: 55, color: '#ff4d4d' };
           spawnParticles(o.x, o.y, '#ff4d4d');
           obstacleCooldown[key] = 45;
-
-          if (heldBy[key]) {
-            const b = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
-            if (b) b.heldBy = null;
-            heldBy[key] = null;
-          }
           break;
         }
       }
@@ -588,15 +576,14 @@
       canvasCtx.fillStyle = 'rgba(0,0,0,0.15)';
       canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
 
+      const speedMul = speedMultiplierForRound(roundNumber);
       floatingBoxes.forEach(function (b) {
-        if (!b.heldBy) {
-          b.x = b.baseX + Math.sin(t * b.speed + b.phase) * b.radiusX;
-          b.y = b.baseY + Math.cos(t * b.speed * 0.8 + b.phase) * b.radiusY;
-        }
+        b.x = b.baseX + Math.sin(t * b.speed * speedMul + b.phase) * b.radiusX;
+        b.y = b.baseY + Math.cos(t * b.speed * speedMul * 0.8 + b.phase) * b.radiusY;
       });
       obstacles.forEach(function (o) {
-        o.x = o.baseX + Math.sin(t * o.speed + o.phase) * o.radiusX;
-        o.y = o.baseY + Math.cos(t * o.speed * 0.8 + o.phase) * o.radiusY;
+        o.x = o.baseX + Math.sin(t * o.speed * speedMul + o.phase) * o.radiusX;
+        o.y = o.baseY + Math.cos(t * o.speed * speedMul * 0.8 + o.phase) * o.radiusY;
       });
 
       let leftHand = null, rightHand = null;
@@ -609,12 +596,11 @@
         updateSmoothedHand('right', null);
       }
 
-      updateHandInteraction('left', leftHand);
-      updateHandInteraction('right', rightHand);
+      checkBoxTap('left', leftHand);
+      checkBoxTap('right', rightHand);
       checkObstacleHit('left', leftHand);
       checkObstacleHit('right', rightHand);
 
-      drawCenterZone(t, minDim);
       drawPromptBox();
       floatingBoxes.forEach(function (b) { drawBox(b, minDim); });
       obstacles.forEach(function (o) { drawObstacle(o, minDim, t); });
@@ -690,39 +676,16 @@
       drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
     }
 
-    function drawCenterZone(t, minDim) {
-      const cx = CENTER_ZONE.x * canvasElement.width;
-      const cy = CENTER_ZONE.y * canvasElement.height;
-      const r = CENTER_ZONE.r * minDim * (1 + Math.sin(t * 3) * 0.04);
-
-      canvasCtx.save();
-      canvasCtx.setLineDash([10, 8]);
-      canvasCtx.lineWidth = 4;
-      canvasCtx.strokeStyle = 'rgba(255,255,255,0.85)';
-      canvasCtx.beginPath();
-      canvasCtx.arc(cx, cy, r, 0, Math.PI * 2);
-      canvasCtx.stroke();
-      canvasCtx.setLineDash([]);
-      canvasCtx.fillStyle = 'rgba(255,255,255,0.12)';
-      canvasCtx.beginPath();
-      canvasCtx.arc(cx, cy, r, 0, Math.PI * 2);
-      canvasCtx.fill();
-      canvasCtx.restore();
-
-      canvasCtx.fillStyle = 'rgba(255,255,255,0.9)';
-      canvasCtx.font = "bold " + Math.round(minDim * 0.03) + "px Kanit";
-      drawMirroredText('วางตรงนี้', cx, cy);
-    }
-
     function drawBox(b, minDim) {
       const cx = b.x * canvasElement.width;
       const cy = b.y * canvasElement.height;
       const w = b.w * minDim;
       const h = b.h * minDim;
+      const isHovered = hoverId.left === b.id || hoverId.right === b.id;
 
       canvasCtx.save();
       canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
-      canvasCtx.shadowBlur = b.heldBy ? 22 : 10;
+      canvasCtx.shadowBlur = isHovered ? 24 : 10;
       canvasCtx.fillStyle = b.color;
 
       if (currentMode === 'shape' && b.shape) {
@@ -732,7 +695,7 @@
       }
       canvasCtx.fill();
 
-      if (b.heldBy) {
+      if (isHovered) {
         canvasCtx.lineWidth = 4;
         canvasCtx.strokeStyle = 'white';
         canvasCtx.stroke();
@@ -743,6 +706,14 @@
         canvasCtx.fillStyle = 'white';
         canvasCtx.font = "bold " + Math.round(h * 0.22) + "px Kanit";
         drawMirroredText(b.tool, cx, cy);
+      } else if (b.label) {
+        canvasCtx.save();
+        canvasCtx.fillStyle = isLightColor(b.color) ? '#1a1a1a' : '#ffffff';
+        canvasCtx.font = "bold " + Math.round(Math.min(w, h) * 0.16) + "px Kanit";
+        canvasCtx.shadowColor = 'rgba(0,0,0,0.35)';
+        canvasCtx.shadowBlur = 3;
+        drawMirroredText(b.label, cx, cy);
+        canvasCtx.restore();
       }
     }
 
