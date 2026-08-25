@@ -145,7 +145,7 @@
 
     const INSTRUCTIONS = {
       color: 'แตะ "กล่องสี" ที่ตรงกับคำสั่งด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
-      factory: 'แตะ "กล่องเครื่องมือ" ที่ตรงกับคำสั่งด้วยมือ! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      digital: 'แตะ "กล่องเครื่องมือดิจิทัล" ที่มีชื่อตรงกับคำสั่งด้วยมือ! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
       shape: 'แตะ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสีด้วยมือ อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
     };
     document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
@@ -260,13 +260,16 @@
       { color: '#ecf0f1', label: 'สีขาว' }
     ];
 
-    // สีสันหลากหลายสำหรับโหมด factory (เดิมเป็นสีเทาล้วน)
-    const TOOL_COLOR_MAP = {
-      ERP: '#8e44ad',
-      SCADA: '#16a085',
-      IoT: '#e67e22',
-      MES: '#d63384'
-    };
+    // รายชื่อเครื่องมือดิจิทัล (โหมด Digital Tools) พร้อมชุดสีที่ไล่โทนแยกกันชัดเจน
+    const TOOL_LIST = [
+      'Google Sheets', 'Google Slides', 'Google Docs', 'Google Forms', 'Google Calendar',
+      'Google Drive', 'Google Meet', 'Google Chat', 'Google Gmail', 'Google Apps Script',
+      'Python', 'Snowflake', 'Microsoft SQL Server', 'SAP', 'Augmentir',
+      'DOMO', 'Sigma', 'Gemini', 'Notebook LM', 'Google Vids'
+    ];
+    const TOOL_COLORS = TOOL_LIST.map(function (_, i) {
+      return 'hsl(' + Math.round(i * (360 / TOOL_LIST.length)) + ', 68%, 40%)';
+    });
 
     // รูปทรงสำหรับโหมด shape
     const SHAPES = [
@@ -447,29 +450,27 @@
           };
         }));
       } else {
-        const toolDefs = [
-          { tool: 'ERP', question: 'ระบบวางแผนทรัพยากร' },
-          { tool: 'SCADA', question: 'ระบบควบคุมเครื่องจักร' },
-          { tool: 'IoT', question: 'ดึงข้อมูลเซ็นเซอร์' },
-          { tool: 'MES', question: 'ควบคุมการผลิตในไลน์' }
-        ];
-
-        const targetIndex = Math.floor(Math.random() * toolDefs.length);
+        // โหมด Digital Tools: หาให้เจอกล่องเครื่องมือดิจิทัลที่มีชื่อตรงกับคำสั่ง
+        const count = Math.min(countForRound(roundNumber - 1), 6);
+        const pool = shuffle(TOOL_LIST.map(function (name, i) {
+          return { name: name, color: TOOL_COLORS[i] };
+        })).slice(0, count);
+        const targetIndex = Math.floor(Math.random() * pool.length);
 
         currentPrompt = {
-          text: toolDefs[targetIndex].question,
+          text: 'หา: ' + pool[targetIndex].name,
           bgColor: '#34495e',
           textColor: '#ffffff'
         };
 
-        const sizeBase = baseSizeForCount(4);
-        floatingBoxes = placeItems(toolDefs.map(function (t, i) {
+        const sizeBase = baseSizeForCount(count);
+        floatingBoxes = placeItems(pool.map(function (t, i) {
           return {
-            tool: t.tool,
-            color: TOOL_COLOR_MAP[t.tool],
+            tool: t.name,
+            color: t.color,
             isCorrect: i === targetIndex,
-            w: sizeBase * randRange(0.9, 1.2),
-            h: sizeBase * randRange(0.9, 1.2)
+            w: sizeBase * randRange(1.15, 1.5),
+            h: sizeBase * randRange(0.8, 1.0)
           };
         }));
       }
@@ -676,6 +677,39 @@
       drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
     }
 
+    function wrapLabel(text, maxLen) {
+      if (text.length <= maxLen) return [text];
+      const words = text.split(' ');
+      if (words.length === 1) return [text];
+      let bestSplit = 1, bestDiff = Infinity;
+      for (let i = 1; i < words.length; i++) {
+        const line1 = words.slice(0, i).join(' ');
+        const line2 = words.slice(i).join(' ');
+        const diff = Math.abs(line1.length - line2.length);
+        if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
+      }
+      return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
+    }
+
+    function drawToolLabel(text, cx, cy, w, h) {
+      const lines = wrapLabel(text, 12);
+      const longest = Math.max.apply(null, lines.map(function (l) { return l.length; }));
+      let fontSize = Math.min(h * 0.26, (w * 0.88) / (longest * 0.56));
+      fontSize = Math.max(fontSize, 10);
+
+      canvasCtx.save();
+      canvasCtx.fillStyle = '#ffffff';
+      canvasCtx.font = "bold " + Math.round(fontSize) + "px Kanit";
+      canvasCtx.shadowColor = 'rgba(0,0,0,0.4)';
+      canvasCtx.shadowBlur = 3;
+      const lineHeight = fontSize * 1.15;
+      const startY = cy - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach(function (line, i) {
+        drawMirroredText(line, cx, startY + i * lineHeight);
+      });
+      canvasCtx.restore();
+    }
+
     function drawBox(b, minDim) {
       const cx = b.x * canvasElement.width;
       const cy = b.y * canvasElement.height;
@@ -702,10 +736,8 @@
       }
       canvasCtx.restore();
 
-      if (currentMode === 'factory' && b.tool) {
-        canvasCtx.fillStyle = 'white';
-        canvasCtx.font = "bold " + Math.round(h * 0.22) + "px Kanit";
-        drawMirroredText(b.tool, cx, cy);
+      if (currentMode === 'digital' && b.tool) {
+        drawToolLabel(b.tool, cx, cy, w, h);
       } else if (b.label) {
         canvasCtx.save();
         canvasCtx.fillStyle = isLightColor(b.color) ? '#1a1a1a' : '#ffffff';
