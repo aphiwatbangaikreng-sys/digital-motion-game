@@ -229,8 +229,8 @@
 
     // ---------- ตรวจสอบตำแหน่งผู้เล่นก่อนเริ่มเกม (ระยะ + จุดกึ่งกลาง) ----------
     // ปรับค่าพวกนี้ตามหน้างานจริงได้เลย โดยดูตัวเลขสดจากตาราง Debug ตอน calibrate
-    const SHOULDER_WIDTH_TOO_CLOSE = 0.42; // กว้างกว่านี้ = ยืนใกล้กล้องเกินไป ให้ถอยออก
-    const SHOULDER_WIDTH_TOO_FAR = 0.14;   // แคบกว่านี้ = ยืนไกล/ตรวจไม่ชัดเจน
+    const SHOULDER_WIDTH_TOO_CLOSE = 0.30; // กว้างกว่านี้ = ยืนใกล้กล้องเกินไป ให้ถอยออก (เดิม 0.42 — ปรับให้ต้องถอยไกลขึ้น)
+    const SHOULDER_WIDTH_TOO_FAR = 0.09;   // แคบกว่านี้ = ยืนไกล/ตรวจไม่ชัดเจน
     const CENTER_OFFSET_TOLERANCE = 0.12;  // ระยะเบี่ยงจากกึ่งกลางเฟรมที่ยอมรับได้
     const SHOULDER_VISIBILITY_MIN = 0.5;   // ความมั่นใจขั้นต่ำว่าเห็นไหล่ทั้งสองข้างชัด
 
@@ -366,6 +366,61 @@
       document.getElementById('calibStartBtn').disabled = metrics.status !== 'ok';
     }
 
+    // วาดกรอบล้อมรอบตัวคนบนภาพกล้อง (สไตล์กรอบตรวจจับ AI) จากจุด landmark ที่ Pose มองเห็นชัด
+    function drawPersonBoundingBox(lm, status) {
+      if (!lm) return;
+      let minX = 1, maxX = 0, minY = 1, maxY = 0, any = false;
+      lm.forEach(function (p) {
+        if ((p.visibility || 0) < 0.5) return;
+        any = true;
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      });
+      if (!any) return;
+
+      const padX = (maxX - minX) * 0.12;
+      const padY = (maxY - minY) * 0.08;
+      minX = Math.max(0, minX - padX);
+      maxX = Math.min(1, maxX + padX);
+      minY = Math.max(0, minY - padY);
+      maxY = Math.min(1, maxY + padY);
+
+      const x = minX * canvasElement.width;
+      const y = minY * canvasElement.height;
+      const w = (maxX - minX) * canvasElement.width;
+      const h = (maxY - minY) * canvasElement.height;
+
+      const color = status === 'ok' ? '#7CFC00' : (status === 'no_person' ? '#ff4d4d' : '#ffd166');
+      const cornerLen = Math.min(w, h) * 0.18;
+
+      canvasCtx.save();
+      canvasCtx.strokeStyle = color;
+      canvasCtx.lineWidth = 4;
+      canvasCtx.shadowColor = color;
+      canvasCtx.shadowBlur = 10;
+
+      // มุมกรอบ 4 มุมสไตล์ AI-detect
+      const corners = [
+        [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]
+      ];
+      corners.forEach(function (c) {
+        const cx = c[0], cy = c[1], dx = c[2], dy = c[3];
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(cx, cy + cornerLen * dy);
+        canvasCtx.lineTo(cx, cy);
+        canvasCtx.lineTo(cx + cornerLen * dx, cy);
+        canvasCtx.stroke();
+      });
+
+      // เส้นขอบจางๆ เต็มกรอบ ให้เห็นพื้นที่ชัดขึ้น
+      canvasCtx.globalAlpha = 0.35;
+      canvasCtx.lineWidth = 1.5;
+      canvasCtx.strokeRect(x, y, w, h);
+      canvasCtx.restore();
+    }
+
     function onPoseResults(results) {
       const metrics = computeBodyMetrics(results.poseLandmarks);
       if (gameState === 'calibrating') {
@@ -373,6 +428,9 @@
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        drawPersonBoundingBox(results.poseLandmarks, metrics.status);
+
         canvasCtx.strokeStyle = 'rgba(255,255,255,0.35)';
         canvasCtx.lineWidth = 2;
         canvasCtx.beginPath();
