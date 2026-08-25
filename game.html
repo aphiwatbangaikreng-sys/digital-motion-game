@@ -192,7 +192,7 @@
     const hasReturnUrl = !!returnUrl; // เปิดผ่านหน้าแรกมาหรือไม่ (มี returnUrl ให้ redirect กลับไปบันทึกคะแนน)
 
     const INSTRUCTIONS = {
-      color: 'ชี้ไปที่ "กล่องสี" ที่ตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
+      color: 'ดูที่ "สีหมึก" ของคำสั่งด้านบน (ไม่ใช่ความหมายของคำ) แล้วชี้ไปที่กล่องที่มีสีจริงตรงกับสีหมึกนั้น กำมือค้างไว้สักครู่เพื่อยืนยัน เช่น คำว่า "สีเขียว" แต่เขียนด้วยหมึกสีแดง ต้องกำมือที่กล่องสีแดงเท่านั้น! อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
       digital: 'ชี้ไปที่ "กล่องเครื่องมือดิจิทัล" ที่มีชื่อตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
       shape: 'ชี้ไปที่ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสี แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
     };
@@ -593,13 +593,15 @@
       if (currentMode === 'color') {
         const count = countForRound(roundNumber - 1);
         const pool = shuffle(COLOR_POOL.slice()).slice(0, count);
-        const targetIndex = Math.floor(Math.random() * pool.length);
-        const fakeIndex = randIntDiff(pool.length, targetIndex);
+        // Stroop effect ที่ตัวคำสั่งเอง: "เขียนคำว่า" wordIndex แต่ "ระบายด้วยสีหมึก" inkIndex
+        // คำตอบที่ถูกต้องคือกล่องที่มีสีจริงตรงกับ "สีหมึก" ของตัวอักษร ไม่ใช่ความหมายของคำที่เขียน
+        const wordIndex = Math.floor(Math.random() * pool.length);
+        const inkIndex = randIntDiff(pool.length, wordIndex);
 
         currentPrompt = {
-          text: pool[targetIndex].label,
-          bgColor: pool[fakeIndex].color,
-          textColor: isLightColor(pool[fakeIndex].color) ? '#1a1a1a' : '#ffffff'
+          text: pool[wordIndex].label,
+          bgColor: '#f4f4ff',
+          textColor: pool[inkIndex].color
         };
 
         const sizeBase = baseSizeForCount(count);
@@ -609,7 +611,7 @@
           return {
             color: c.color,
             label: pool[wrongLabelIdx].label,
-            isCorrect: i === targetIndex,
+            isCorrect: i === inkIndex,
             w: sizeBase * randRange(0.75, 1.3),
             h: sizeBase * randRange(0.75, 1.3)
           };
@@ -885,12 +887,18 @@
       canvasCtx.restore();
     }
 
-    function drawMirroredText(text, cx, cy) {
+    function drawMirroredText(text, cx, cy, strokeColor, strokeWidth) {
       canvasCtx.save();
       canvasCtx.textAlign = "center";
       canvasCtx.textBaseline = "middle";
       canvasCtx.translate(cx, cy);
       canvasCtx.scale(-1, 1);
+      if (strokeColor) {
+        canvasCtx.lineJoin = 'round';
+        canvasCtx.lineWidth = strokeWidth || 4;
+        canvasCtx.strokeStyle = strokeColor;
+        canvasCtx.strokeText(text, 0, 0);
+      }
       canvasCtx.fillText(text, 0, 0);
       canvasCtx.restore();
     }
@@ -945,7 +953,8 @@
 
       canvasCtx.fillStyle = currentPrompt.textColor;
       canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
-      drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
+      const promptOutline = isLightColor(currentPrompt.textColor) ? 'rgba(20,20,30,0.55)' : 'rgba(255,255,255,0.7)';
+      drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2), promptOutline, Math.round(boxH * 0.05));
     }
 
     function wrapLabel(text, maxLen) {
