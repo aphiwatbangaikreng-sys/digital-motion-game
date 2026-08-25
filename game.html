@@ -194,7 +194,7 @@
     const INSTRUCTIONS = {
       color: 'ดูที่ "สีหมึก" ของคำสั่งด้านบน (ไม่ใช่ความหมายของคำ) แล้วชี้ไปที่กล่องที่มีสีจริงตรงกับสีหมึกนั้น กำมือค้างไว้สักครู่เพื่อยืนยัน เช่น คำว่า "สีเขียว" แต่เขียนด้วยหมึกสีแดง ต้องกำมือที่กล่องสีแดงเท่านั้น! อย่าถูกคำที่เขียนบนกล่องหลอก ดูที่สีจริงของกล่อง ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
       digital: 'ชี้ไปที่ "กล่องเครื่องมือดิจิทัล" ที่มีชื่อตรงกับคำสั่ง แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ',
-      shape: 'ชี้ไปที่ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสี แล้วกำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
+      shape: 'ดูที่ "รูปทรงและสีจริง" ที่วาดอยู่ในกล่องโจทย์ด้านบน (ไม่ใช่ตัวหนังสือที่เขียนกำกับไว้ ซึ่งจงใจเขียนหลอกเสมอ) แล้วชี้ไปที่รูปทรงลอยที่มีรูปทรง+สีตรงกันทุกประการ กำมือค้างไว้สักครู่เพื่อยืนยัน อย่าถูกคำที่เขียนบนกล่องโจทย์หรือบนรูปทรงลอยหลอก! ⚠️ ระวังของสีแดงมีหนาม ห้ามแตะ'
     };
     document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
 
@@ -646,11 +646,17 @@
           }
         }
 
-        const promptBgIdx = randIntDiff(COLOR_POOL.length, colorIdx);
+        // กล่องโจทย์ (ด้านบน) วาดเป็น "รูปทรง+สีจริง" ซึ่งคือคำตอบที่ถูกต้องที่ต้องกำมือ
+        // ส่วนตัวหนังสือกำกับในกล่องโจทย์ จงใจเขียนชื่อรูปทรง+สีอื่นหลอกไว้เสมอ (ไม่ตรงกับรูปทรง/สีจริงที่วาด)
+        // ผู้เล่นต้องดูรูปทรงที่วาดจริง ไม่ใช่ตัวหนังสือที่เขียนกำกับ
+        const decoyShapeIdx = randIntDiff(SHAPES.length, shapeIdx);
+        const decoyColorIdx = randIntDiff(COLOR_POOL.length, colorIdx);
         currentPrompt = {
-          text: SHAPES[shapeIdx].label + COLOR_POOL[colorIdx].label,
-          bgColor: COLOR_POOL[promptBgIdx].color,
-          textColor: isLightColor(COLOR_POOL[promptBgIdx].color) ? '#1a1a1a' : '#ffffff'
+          shape: SHAPES[shapeIdx].key,
+          shapeColor: COLOR_POOL[colorIdx].color,
+          text: SHAPES[decoyShapeIdx].label + COLOR_POOL[decoyColorIdx].label,
+          bgColor: '#20263f',
+          textColor: '#ffffff'
         };
 
         const sizeBase = baseSizeForCount(count);
@@ -938,8 +944,9 @@
     }
 
     function drawPromptBox() {
-      const boxW = Math.min(460, canvasElement.width * 0.6);
-      const boxH = Math.max(70, canvasElement.height * 0.09);
+      const isShapePrompt = currentMode === 'shape' && currentPrompt.shape;
+      const boxW = Math.min(isShapePrompt ? 520 : 460, canvasElement.width * (isShapePrompt ? 0.68 : 0.6));
+      const boxH = Math.max(isShapePrompt ? 92 : 70, canvasElement.height * (isShapePrompt ? 0.115 : 0.09));
       const boxX = (canvasElement.width / 2) - (boxW / 2);
       const boxY = canvasElement.height * 0.04;
 
@@ -951,10 +958,44 @@
       canvasCtx.fill();
       canvasCtx.restore();
 
-      canvasCtx.fillStyle = currentPrompt.textColor;
-      canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
-      const promptOutline = isLightColor(currentPrompt.textColor) ? 'rgba(20,20,30,0.55)' : 'rgba(255,255,255,0.7)';
-      drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2), promptOutline, Math.round(boxH * 0.05));
+      if (isShapePrompt) {
+        // ไอคอนรูปทรง+สีจริง (คือคำตอบที่ถูกต้อง) ฝั่งหนึ่งของกล่องโจทย์
+        const iconSize = boxH * 0.6;
+        const iconCx = boxX + boxH * 0.62;
+        const iconCy = boxY + boxH / 2;
+
+        canvasCtx.save();
+        canvasCtx.shadowColor = 'rgba(0,0,0,0.35)';
+        canvasCtx.shadowBlur = 6;
+        canvasCtx.fillStyle = currentPrompt.shapeColor;
+        shapePath(currentPrompt.shape, iconCx, iconCy, iconSize, iconSize);
+        canvasCtx.fill();
+        canvasCtx.lineWidth = 2.5;
+        canvasCtx.strokeStyle = 'rgba(255,255,255,0.85)';
+        canvasCtx.stroke();
+        canvasCtx.restore();
+
+        // เส้นแบ่งบางๆ คั่นระหว่างไอคอน (คำตอบจริง) กับข้อความหลอก
+        canvasCtx.save();
+        canvasCtx.strokeStyle = 'rgba(255,255,255,0.15)';
+        canvasCtx.lineWidth = 1.5;
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(boxX + boxH * 1.14, boxY + boxH * 0.18);
+        canvasCtx.lineTo(boxX + boxH * 1.14, boxY + boxH * 0.82);
+        canvasCtx.stroke();
+        canvasCtx.restore();
+
+        // ตัวหนังสือหลอก (ชื่อรูปทรง+สีอื่น ไม่ตรงกับไอคอนที่วาดจริง)
+        const textCx = boxX + boxH * 1.14 + (boxX + boxW - (boxX + boxH * 1.14)) / 2;
+        canvasCtx.fillStyle = currentPrompt.textColor;
+        canvasCtx.font = "bold " + Math.round(boxH * 0.22) + "px Kanit";
+        drawMirroredText(currentPrompt.text, textCx, iconCy, 'rgba(0,0,0,0.5)', Math.round(boxH * 0.035));
+      } else {
+        canvasCtx.fillStyle = currentPrompt.textColor;
+        canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
+        const promptOutline = isLightColor(currentPrompt.textColor) ? 'rgba(20,20,30,0.55)' : 'rgba(255,255,255,0.7)';
+        drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2), promptOutline, Math.round(boxH * 0.05));
+      }
     }
 
     function wrapLabel(text, maxLen) {
@@ -1143,7 +1184,8 @@
         page: 'result',
         score: score,
         name: pName,
-        empId: pEmpId
+        empId: pEmpId,
+        category: currentMode
       });
       window.location.href = returnUrl + (returnUrl.includes('?') ? '&' : '?') + params.toString();
     }
