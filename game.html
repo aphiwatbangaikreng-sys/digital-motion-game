@@ -68,7 +68,7 @@
       backdrop-filter: blur(4px);
       padding: 8px 18px;
       border-radius: 999px;
-      font-size: clamp(16px, 2.6vw, 24px);
+      font-size: clamp(15px, 2.4vw, 22px);
       font-weight: 700;
       color: #fff;
       box-shadow: 0 3px 10px rgba(0,0,0,0.3);
@@ -81,9 +81,11 @@
       text-align: center;
       color: white;
       text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.9);
-      font-size: clamp(13px, 1.8vw, 18px);
+      font-size: clamp(12px, 1.7vw, 17px);
       z-index: 10;
       pointer-events: none;
+      padding: 0 12px;
+      box-sizing: border-box;
     }
 
     #error-box {
@@ -120,7 +122,7 @@
       </div>
       <video id="video" autoplay playsinline></video>
       <canvas id="output_canvas"></canvas>
-      <p class="instructions">จับกล่องคำตอบที่ถูกต้องด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ!</p>
+      <p class="instructions" id="instructionsText">จับกล่องคำตอบที่ถูกต้องด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ!</p>
     </div>
   </div>
 
@@ -141,6 +143,13 @@
     const currentMode = urlParams.get('mode') || 'color';
     const returnUrl = urlParams.get('returnUrl') || '';
 
+    const INSTRUCTIONS = {
+      color: 'จับ "กล่องสี" ที่ตรงกับคำสั่งด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ',
+      factory: 'จับ "กล่องเครื่องมือ" ที่ตรงกับคำสั่งด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ',
+      shape: 'จับ "รูปทรงสี" ที่ตรงกับคำสั่งทั้งรูปทรงและสีด้วยมือ แล้วลากมาวางตรงวงกลมกลางจอ! ⚠️ ระวังของสีแดงมีหนาม ห้ามจับ'
+    };
+    document.getElementById('instructionsText').innerText = INSTRUCTIONS[currentMode] || INSTRUCTIONS.color;
+
     let pose, camera;
     let gameState = 'idle';
     let score = 0;
@@ -149,15 +158,18 @@
     let isCooldown = false;
     let currentPrompt = {};
     let startTime = performance.now();
+    let roundNumber = 0;
 
     let floatingBoxes = [];   // กล่องคำตอบที่ลอยไปมา รอบปัจจุบัน
+    let obstacles = [];       // สิ่งกีดขวาง (แตะแล้วโดนหักคะแนน)
+    let obstacleCooldown = { left: 0, right: 0 };
     let heldBy = { left: null, right: null }; // id ของกล่องที่มือซ้าย/ขวากำลังจับอยู่
     let smoothedHand = { left: null, right: null }; // ตำแหน่งมือแบบ smoothing กันกระตุก
     let particles = [];       // เอฟเฟกต์ระเบิดสีตอนได้คะแนน
     let feedback = null;      // ข้อความแจ้งเตือนชั่วคราว (เช่น "ผิด! ลองใหม่")
 
     const CENTER_ZONE = { x: 0.5, y: 0.55, r: 0.11 }; // วงกลมเป้าหมายกลางจอ (สัดส่วนของ min(w,h))
-    const GRAB_RADIUS = 0.10; // ระยะที่มือต้องเข้าใกล้กล่องถึงจะ "จับ" ได้ (สัดส่วนของ min(w,h))
+    const OBSTACLE_HIT_RADIUS = 0.085;
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -209,12 +221,14 @@
         gameState = 'playing';
         score = 0;
         timeLeft = 30;
+        roundNumber = 0;
         startTime = performance.now();
+        updateTimeDisplay();
         generateNewPrompt();
 
         timerInterval = setInterval(function () {
           timeLeft--;
-          document.getElementById('timeDisplay').innerText = 'เวลา: ' + timeLeft;
+          updateTimeDisplay();
           if (timeLeft <= 0) endGame();
         }, 1000);
       }).catch(function (error) {
@@ -225,6 +239,26 @@
       });
     }
 
+    function updateTimeDisplay() {
+      document.getElementById('timeDisplay').innerText = 'เวลา: ' + timeLeft + '  •  รอบ ' + roundNumber;
+    }
+
+    // ---------- คลังสี (ขยายจาก 4 เป็นสูงสุด 12 สี) ----------
+    const COLOR_POOL = [
+      { color: '#e74c3c', label: 'สีแดง' },
+      { color: '#2ecc71', label: 'สีเขียว' },
+      { color: '#3498db', label: 'สีน้ำเงิน' },
+      { color: '#f1c40f', label: 'สีเหลือง' },
+      { color: '#e67e22', label: 'สีส้ม' },
+      { color: '#9b59b6', label: 'สีม่วง' },
+      { color: '#ff5d9e', label: 'สีชมพู' },
+      { color: '#00bcd4', label: 'สีฟ้า' },
+      { color: '#8d6e63', label: 'สีน้ำตาล' },
+      { color: '#7f8c8d', label: 'สีเทา' },
+      { color: '#37474f', label: 'สีดำ' },
+      { color: '#ecf0f1', label: 'สีขาว' }
+    ];
+
     // สีสันหลากหลายสำหรับโหมด factory (เดิมเป็นสีเทาล้วน)
     const TOOL_COLOR_MAP = {
       ERP: '#8e44ad',
@@ -233,67 +267,173 @@
       MES: '#d63384'
     };
 
+    // รูปทรงสำหรับโหมด shape
+    const SHAPES = [
+      { key: 'triangle', label: 'สามเหลี่ยม' },
+      { key: 'square', label: 'สี่เหลี่ยม' },
+      { key: 'circle', label: 'วงกลม' },
+      { key: 'star', label: 'ดาว' }
+    ];
+
     function randRange(min, max) { return min + Math.random() * (max - min); }
+    function randIntDiff(n, exclude) {
+      let v = Math.floor(Math.random() * n);
+      while (v === exclude) v = Math.floor(Math.random() * n);
+      return v;
+    }
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+      }
+      return arr;
+    }
+    function isLightColor(hex) {
+      const c = hex.replace('#', '');
+      const r = parseInt(c.substr(0, 2), 16), g = parseInt(c.substr(2, 2), 16), b = parseInt(c.substr(4, 2), 16);
+      return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62;
+    }
 
-    function placeFloatingBoxes(defs) {
-      const placed = [];
+    // จำนวนกล่องต่อรอบ: ไล่ 4 -> 6 -> 8 -> 10 -> 12 แล้ววนกลับลงมา สลับไปมาเรื่อยๆ
+    const COUNT_SEQUENCE = [4, 6, 8, 10, 12, 10, 8, 6];
+    function countForRound(round) {
+      return COUNT_SEQUENCE[round % COUNT_SEQUENCE.length];
+    }
+
+    // ขนาดกล่องเฉลี่ย: ยิ่งมีกล่องเยอะ ยิ่งย่อลงเล็กน้อยเพื่อให้พอดีจอ
+    function baseSizeForCount(count) {
+      return Math.max(0.10, 0.205 - (count - 4) * 0.010);
+    }
+
+    function grabRadiusForCount(count) {
+      return Math.max(0.075, 0.115 - (count - 4) * 0.004);
+    }
+
+    // ---------- วางกล่อง/สิ่งของแบบไม่ให้ทับกัน ----------
+    function placeItems(defs, extraAvoid) {
+      const placed = (extraAvoid || []).slice();
+      const result = [];
       defs.forEach(function (def, i) {
-        let bx, by, tries = 0;
+        const w = def.w || 0.15, h = def.h || 0.15;
+        const selfR = (w + h) / 4 + 0.025;
+        let bx, by, tries = 0, ok = false;
         do {
-          bx = randRange(0.14, 0.86);
-          by = randRange(0.30, 0.86);
+          bx = randRange(0.12, 0.88);
+          by = randRange(0.26, 0.88);
           tries++;
-        } while (
-          tries < 30 &&
-          (Math.hypot(bx - CENTER_ZONE.x, by - CENTER_ZONE.y) < CENTER_ZONE.r + 0.14 ||
-            placed.some(function (p) { return Math.hypot(bx - p.baseX, by - p.baseY) < 0.26; }))
-        );
+          ok = Math.hypot(bx - CENTER_ZONE.x, by - CENTER_ZONE.y) >= CENTER_ZONE.r + selfR + 0.05 &&
+            placed.every(function (p) { return Math.hypot(bx - p.baseX, by - p.baseY) >= selfR + p.selfR + 0.015; });
+        } while (!ok && tries < 80);
 
-        placed.push(Object.assign({
-          id: 'box_' + i + '_' + Date.now(),
+        const item = Object.assign({
+          id: 'item_' + i + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
           baseX: bx,
           baseY: by,
-          radiusX: randRange(0.05, 0.10),
-          radiusY: randRange(0.05, 0.10),
-          speed: randRange(0.4, 0.8),
+          selfR: selfR,
+          radiusX: randRange(0.02, 0.05),
+          radiusY: randRange(0.02, 0.05),
+          speed: randRange(0.35, 0.75),
           phase: randRange(0, Math.PI * 2),
           x: bx,
           y: by,
-          w: 0.15,
-          h: 0.15,
+          w: w,
+          h: h,
           heldBy: null
-        }, def));
+        }, def);
+
+        placed.push(item);
+        result.push(item);
       });
-      return placed;
+      return result;
+    }
+
+    function spawnObstacles(round, avoidBoxes) {
+      const n = Math.min(3, 1 + Math.floor((round - 1) / 3));
+      const defs = [];
+      for (let i = 0; i < n; i++) {
+        defs.push({ w: 0.14, h: 0.14, isObstacle: true });
+      }
+      obstacles = placeItems(defs, avoidBoxes).map(function (o) {
+        o.radiusX = randRange(0.04, 0.08);
+        o.radiusY = randRange(0.04, 0.08);
+        o.speed = randRange(0.5, 0.9);
+        return o;
+      });
     }
 
     function generateNewPrompt() {
       heldBy = { left: null, right: null };
       particles = [];
       feedback = null;
+      roundNumber++;
 
       if (currentMode === 'color') {
-        const colorDefs = [
-          { color: '#e74c3c', label: 'สีแดง' },
-          { color: '#2ecc71', label: 'สีเขียว' },
-          { color: '#3498db', label: 'สีน้ำเงิน' },
-          { color: '#f1c40f', label: 'สีเหลือง' }
-        ];
-
-        const targetIndex = Math.floor(Math.random() * colorDefs.length);
-        let fakeColorIndex = Math.floor(Math.random() * colorDefs.length);
-        while (fakeColorIndex === targetIndex) {
-          fakeColorIndex = Math.floor(Math.random() * colorDefs.length);
-        }
+        const count = countForRound(roundNumber - 1);
+        const pool = shuffle(COLOR_POOL.slice()).slice(0, count);
+        const targetIndex = Math.floor(Math.random() * pool.length);
+        const fakeIndex = randIntDiff(pool.length, targetIndex);
 
         currentPrompt = {
-          text: colorDefs[targetIndex].label,
-          bgColor: colorDefs[fakeColorIndex].color,
-          textColor: 'white'
+          text: pool[targetIndex].label,
+          bgColor: pool[fakeIndex].color,
+          textColor: isLightColor(pool[fakeIndex].color) ? '#1a1a1a' : '#ffffff'
         };
 
-        floatingBoxes = placeFloatingBoxes(colorDefs.map(function (c, i) {
-          return { color: c.color, isCorrect: i === targetIndex };
+        const sizeBase = baseSizeForCount(count);
+        floatingBoxes = placeItems(pool.map(function (c, i) {
+          return {
+            color: c.color,
+            isCorrect: i === targetIndex,
+            w: sizeBase * randRange(0.75, 1.3),
+            h: sizeBase * randRange(0.75, 1.3)
+          };
+        }));
+      } else if (currentMode === 'shape') {
+        const count = Math.min(countForRound(roundNumber - 1), 10);
+        const shapeIdx = Math.floor(Math.random() * SHAPES.length);
+        const colorIdx = Math.floor(Math.random() * COLOR_POOL.length);
+
+        const used = new Set([shapeIdx + '_' + colorIdx]);
+        const combos = [{ shapeIdx: shapeIdx, colorIdx: colorIdx, isCorrect: true }];
+
+        // ตัวลวงที่ 1: รูปทรงเดียวกัน สีต่างกัน
+        const c2 = randIntDiff(COLOR_POOL.length, colorIdx);
+        combos.push({ shapeIdx: shapeIdx, colorIdx: c2, isCorrect: false });
+        used.add(shapeIdx + '_' + c2);
+
+        // ตัวลวงที่ 2: สีเดียวกัน รูปทรงต่างกัน
+        const s2 = randIntDiff(SHAPES.length, shapeIdx);
+        combos.push({ shapeIdx: s2, colorIdx: colorIdx, isCorrect: false });
+        used.add(s2 + '_' + colorIdx);
+
+        let guard = 0;
+        while (combos.length < count && guard < 300) {
+          guard++;
+          const si = Math.floor(Math.random() * SHAPES.length);
+          const ci = Math.floor(Math.random() * COLOR_POOL.length);
+          const key = si + '_' + ci;
+          if (!used.has(key)) {
+            used.add(key);
+            combos.push({ shapeIdx: si, colorIdx: ci, isCorrect: false });
+          }
+        }
+
+        const promptBgIdx = randIntDiff(COLOR_POOL.length, colorIdx);
+        currentPrompt = {
+          text: SHAPES[shapeIdx].label + COLOR_POOL[colorIdx].label,
+          bgColor: COLOR_POOL[promptBgIdx].color,
+          textColor: isLightColor(COLOR_POOL[promptBgIdx].color) ? '#1a1a1a' : '#ffffff'
+        };
+
+        const sizeBase = baseSizeForCount(count);
+        floatingBoxes = placeItems(shuffle(combos).map(function (c) {
+          return {
+            shape: SHAPES[c.shapeIdx].key,
+            color: COLOR_POOL[c.colorIdx].color,
+            isCorrect: c.isCorrect,
+            w: sizeBase * randRange(0.8, 1.25),
+            h: sizeBase * randRange(0.8, 1.25)
+          };
         }));
       } else {
         const toolDefs = [
@@ -308,13 +448,23 @@
         currentPrompt = {
           text: toolDefs[targetIndex].question,
           bgColor: '#34495e',
-          textColor: 'white'
+          textColor: '#ffffff'
         };
 
-        floatingBoxes = placeFloatingBoxes(toolDefs.map(function (t, i) {
-          return { tool: t.tool, color: TOOL_COLOR_MAP[t.tool], isCorrect: i === targetIndex };
+        const sizeBase = baseSizeForCount(4);
+        floatingBoxes = placeItems(toolDefs.map(function (t, i) {
+          return {
+            tool: t.tool,
+            color: TOOL_COLOR_MAP[t.tool],
+            isCorrect: i === targetIndex,
+            w: sizeBase * randRange(0.9, 1.2),
+            h: sizeBase * randRange(0.9, 1.2)
+          };
         }));
       }
+
+      spawnObstacles(roundNumber, floatingBoxes);
+      updateTimeDisplay();
     }
 
     function lerp(a, b, t) { return a + (b - a) * t; }
@@ -343,12 +493,14 @@
         return;
       }
 
+      const grabRadius = grabRadiusForCount(floatingBoxes.length);
+
       if (!heldBy[key]) {
         let best = null, bestDist = Infinity;
         floatingBoxes.forEach(function (b) {
           if (b.heldBy) return;
           const d = Math.hypot(hand.x - b.x, hand.y - b.y);
-          if (d < GRAB_RADIUS && d < bestDist) { best = b; bestDist = d; }
+          if (d < grabRadius && d < bestDist) { best = b; bestDist = d; }
         });
         if (best) {
           best.heldBy = key;
@@ -374,7 +526,7 @@
               generateNewPrompt();
             }, 500);
           } else {
-            feedback = { text: 'ยังไม่ใช่กล่องนี้นะ ลองใหม่!', timer: 60 };
+            feedback = { text: 'ยังไม่ใช่กล่องนี้นะ ลองใหม่!', timer: 60, color: '#ff4d4d' };
             const angle = Math.atan2(box.y - CENTER_ZONE.y, box.x - CENTER_ZONE.x) || Math.random() * Math.PI * 2;
             box.baseX = Math.min(0.86, Math.max(0.14, CENTER_ZONE.x + Math.cos(angle) * 0.3));
             box.baseY = Math.min(0.86, Math.max(0.30, CENTER_ZONE.y + Math.sin(angle) * 0.3));
@@ -383,6 +535,29 @@
             box.heldBy = null;
             heldBy[key] = null;
           }
+        }
+      }
+    }
+
+    function checkObstacleHit(key, hand) {
+      if (!hand) return;
+      if (obstacleCooldown[key] > 0) { obstacleCooldown[key]--; return; }
+
+      for (let i = 0; i < obstacles.length; i++) {
+        const o = obstacles[i];
+        if (Math.hypot(hand.x - o.x, hand.y - o.y) < OBSTACLE_HIT_RADIUS) {
+          score = Math.max(0, score - 5);
+          document.getElementById('scoreDisplay').innerText = 'คะแนน: ' + score;
+          feedback = { text: '⚠️ โดนสิ่งกีดขวาง! -5 คะแนน', timer: 55, color: '#ff4d4d' };
+          spawnParticles(o.x, o.y, '#ff4d4d');
+          obstacleCooldown[key] = 45;
+
+          if (heldBy[key]) {
+            const b = floatingBoxes.find(function (fb) { return fb.id === heldBy[key]; });
+            if (b) b.heldBy = null;
+            heldBy[key] = null;
+          }
+          break;
         }
       }
     }
@@ -419,6 +594,10 @@
           b.y = b.baseY + Math.cos(t * b.speed * 0.8 + b.phase) * b.radiusY;
         }
       });
+      obstacles.forEach(function (o) {
+        o.x = o.baseX + Math.sin(t * o.speed + o.phase) * o.radiusX;
+        o.y = o.baseY + Math.cos(t * o.speed * 0.8 + o.phase) * o.radiusY;
+      });
 
       let leftHand = null, rightHand = null;
       if (results.poseLandmarks) {
@@ -432,10 +611,13 @@
 
       updateHandInteraction('left', leftHand);
       updateHandInteraction('right', rightHand);
+      checkObstacleHit('left', leftHand);
+      checkObstacleHit('right', rightHand);
 
       drawCenterZone(t, minDim);
       drawPromptBox();
       floatingBoxes.forEach(function (b) { drawBox(b, minDim); });
+      obstacles.forEach(function (o) { drawObstacle(o, minDim, t); });
       drawParticles();
       drawFeedback();
 
@@ -465,8 +647,32 @@
       canvasCtx.closePath();
     }
 
+    function shapePath(shape, cx, cy, w, h) {
+      canvasCtx.beginPath();
+      if (shape === 'circle') {
+        canvasCtx.arc(cx, cy, Math.min(w, h) / 2, 0, Math.PI * 2);
+      } else if (shape === 'triangle') {
+        canvasCtx.moveTo(cx, cy - h / 2);
+        canvasCtx.lineTo(cx + w / 2, cy + h / 2);
+        canvasCtx.lineTo(cx - w / 2, cy + h / 2);
+        canvasCtx.closePath();
+      } else if (shape === 'star') {
+        const spikes = 5, outerR = Math.min(w, h) / 2, innerR = outerR * 0.45;
+        for (let i = 0; i < spikes * 2; i++) {
+          const ang = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+          const rr = i % 2 === 0 ? outerR : innerR;
+          const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr;
+          if (i === 0) canvasCtx.moveTo(px, py); else canvasCtx.lineTo(px, py);
+        }
+        canvasCtx.closePath();
+      } else {
+        // square / default
+        roundRectPath(cx - w / 2, cy - h / 2, w, h, Math.min(14, w * 0.12));
+      }
+    }
+
     function drawPromptBox() {
-      const boxW = Math.min(440, canvasElement.width * 0.55);
+      const boxW = Math.min(460, canvasElement.width * 0.6);
       const boxH = Math.max(70, canvasElement.height * 0.09);
       const boxX = (canvasElement.width / 2) - (boxW / 2);
       const boxY = canvasElement.height * 0.04;
@@ -480,7 +686,7 @@
       canvasCtx.restore();
 
       canvasCtx.fillStyle = currentPrompt.textColor;
-      canvasCtx.font = "bold " + Math.round(boxH * 0.38) + "px Kanit";
+      canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
       drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2));
     }
 
@@ -509,8 +715,8 @@
     }
 
     function drawBox(b, minDim) {
-      const x = b.x * canvasElement.width - (b.w * minDim) / 2;
-      const y = b.y * canvasElement.height - (b.h * minDim) / 2;
+      const cx = b.x * canvasElement.width;
+      const cy = b.y * canvasElement.height;
       const w = b.w * minDim;
       const h = b.h * minDim;
 
@@ -518,13 +724,17 @@
       canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
       canvasCtx.shadowBlur = b.heldBy ? 22 : 10;
       canvasCtx.fillStyle = b.color;
-      roundRectPath(x, y, w, h, 16);
+
+      if (currentMode === 'shape' && b.shape) {
+        shapePath(b.shape, cx, cy, w, h);
+      } else {
+        shapePath('square', cx, cy, w, h);
+      }
       canvasCtx.fill();
 
       if (b.heldBy) {
         canvasCtx.lineWidth = 4;
         canvasCtx.strokeStyle = 'white';
-        roundRectPath(x, y, w, h, 16);
         canvasCtx.stroke();
       }
       canvasCtx.restore();
@@ -532,8 +742,37 @@
       if (currentMode === 'factory' && b.tool) {
         canvasCtx.fillStyle = 'white';
         canvasCtx.font = "bold " + Math.round(h * 0.22) + "px Kanit";
-        drawMirroredText(b.tool, x + w / 2, y + h / 2);
+        drawMirroredText(b.tool, cx, cy);
       }
+    }
+
+    function drawObstacle(o, minDim, t) {
+      const cx = o.x * canvasElement.width;
+      const cy = o.y * canvasElement.height;
+      const r = o.selfR * minDim * (1 + Math.sin(t * 6 + o.phase) * 0.06);
+
+      canvasCtx.save();
+      canvasCtx.shadowColor = 'rgba(255,60,60,0.65)';
+      canvasCtx.shadowBlur = 18;
+      canvasCtx.beginPath();
+      const spikes = 8;
+      for (let i = 0; i < spikes * 2; i++) {
+        const ang = (i / (spikes * 2)) * Math.PI * 2 + t * 1.2;
+        const rr = i % 2 === 0 ? r : r * 0.55;
+        const px = cx + Math.cos(ang) * rr, py = cy + Math.sin(ang) * rr;
+        if (i === 0) canvasCtx.moveTo(px, py); else canvasCtx.lineTo(px, py);
+      }
+      canvasCtx.closePath();
+      canvasCtx.fillStyle = '#e74c3c';
+      canvasCtx.fill();
+      canvasCtx.lineWidth = 3;
+      canvasCtx.strokeStyle = '#ffe082';
+      canvasCtx.stroke();
+      canvasCtx.restore();
+
+      canvasCtx.fillStyle = 'white';
+      canvasCtx.font = "bold " + Math.round(r * 1.1) + "px Kanit";
+      drawMirroredText('!', cx, cy);
     }
 
     function drawHandCursor(hand, color) {
@@ -574,8 +813,8 @@
 
       canvasCtx.save();
       canvasCtx.globalAlpha = Math.min(1, feedback.timer / 20);
-      canvasCtx.fillStyle = '#ff4d4d';
-      canvasCtx.font = "bold " + Math.round(canvasElement.height * 0.035) + "px Kanit";
+      canvasCtx.fillStyle = feedback.color || '#ff4d4d';
+      canvasCtx.font = "bold " + Math.round(canvasElement.height * 0.032) + "px Kanit";
       drawMirroredText(feedback.text, canvasElement.width / 2, canvasElement.height * (CENTER_ZONE.y + CENTER_ZONE.r + 0.08));
       canvasCtx.restore();
     }
