@@ -945,8 +945,45 @@
 
     function drawPromptBox() {
       const isShapePrompt = currentMode === 'shape' && currentPrompt.shape;
-      const boxW = Math.min(isShapePrompt ? 520 : 460, canvasElement.width * (isShapePrompt ? 0.68 : 0.6));
-      const boxH = Math.max(isShapePrompt ? 92 : 70, canvasElement.height * (isShapePrompt ? 0.115 : 0.09));
+
+      if (isShapePrompt) {
+        // กล่องโจทย์ = รูปทรงจริงเลย (ไม่ใช่กรอบสี่เหลี่ยม) เพื่อให้ตัวรูปทรง+สีคือคำตอบที่ต้องกำมือ
+        const size = Math.min(190, Math.max(130, canvasElement.height * 0.2));
+        const cx = canvasElement.width / 2;
+        const cy = canvasElement.height * 0.05 + size / 2;
+
+        canvasCtx.save();
+        canvasCtx.shadowColor = 'rgba(0,0,0,0.45)';
+        canvasCtx.shadowBlur = 16;
+        canvasCtx.fillStyle = currentPrompt.shapeColor;
+        shapePath(currentPrompt.shape, cx, cy, size, size);
+        canvasCtx.fill();
+        canvasCtx.lineWidth = 3;
+        canvasCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+        canvasCtx.stroke();
+        canvasCtx.restore();
+
+        // ตัวหนังสือหลอก (ชื่อรูปทรง+สีอื่น จงใจไม่ตรงกับรูปทรง/สีจริงที่วาด) เขียนทับอยู่บนรูปทรงเอง
+        canvasCtx.save();
+        const labelColor = isLightColor(currentPrompt.shapeColor) ? '#1a1a1a' : '#ffffff';
+        const outlineColor = isLightColor(currentPrompt.shapeColor) ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.5)';
+        const promptLines = wrapLabel(currentPrompt.text, 8);
+        const promptFontSize = Math.max(11, Math.round(size * (promptLines.length > 1 ? 0.115 : 0.135)));
+        const promptLineHeight = promptFontSize * 1.15;
+        const promptStartY = cy - ((promptLines.length - 1) * promptLineHeight) / 2;
+        canvasCtx.fillStyle = labelColor;
+        canvasCtx.font = "bold " + promptFontSize + "px Kanit";
+        canvasCtx.shadowColor = 'rgba(0,0,0,0.25)';
+        canvasCtx.shadowBlur = 3;
+        promptLines.forEach(function (line, i) {
+          drawMirroredText(line, cx, promptStartY + i * promptLineHeight, outlineColor, Math.round(size * 0.02));
+        });
+        canvasCtx.restore();
+        return;
+      }
+
+      const boxW = Math.min(460, canvasElement.width * 0.6);
+      const boxH = Math.max(70, canvasElement.height * 0.09);
       const boxX = (canvasElement.width / 2) - (boxW / 2);
       const boxY = canvasElement.height * 0.04;
 
@@ -958,44 +995,10 @@
       canvasCtx.fill();
       canvasCtx.restore();
 
-      if (isShapePrompt) {
-        // ไอคอนรูปทรง+สีจริง (คือคำตอบที่ถูกต้อง) ฝั่งหนึ่งของกล่องโจทย์
-        const iconSize = boxH * 0.6;
-        const iconCx = boxX + boxH * 0.62;
-        const iconCy = boxY + boxH / 2;
-
-        canvasCtx.save();
-        canvasCtx.shadowColor = 'rgba(0,0,0,0.35)';
-        canvasCtx.shadowBlur = 6;
-        canvasCtx.fillStyle = currentPrompt.shapeColor;
-        shapePath(currentPrompt.shape, iconCx, iconCy, iconSize, iconSize);
-        canvasCtx.fill();
-        canvasCtx.lineWidth = 2.5;
-        canvasCtx.strokeStyle = 'rgba(255,255,255,0.85)';
-        canvasCtx.stroke();
-        canvasCtx.restore();
-
-        // เส้นแบ่งบางๆ คั่นระหว่างไอคอน (คำตอบจริง) กับข้อความหลอก
-        canvasCtx.save();
-        canvasCtx.strokeStyle = 'rgba(255,255,255,0.15)';
-        canvasCtx.lineWidth = 1.5;
-        canvasCtx.beginPath();
-        canvasCtx.moveTo(boxX + boxH * 1.14, boxY + boxH * 0.18);
-        canvasCtx.lineTo(boxX + boxH * 1.14, boxY + boxH * 0.82);
-        canvasCtx.stroke();
-        canvasCtx.restore();
-
-        // ตัวหนังสือหลอก (ชื่อรูปทรง+สีอื่น ไม่ตรงกับไอคอนที่วาดจริง)
-        const textCx = boxX + boxH * 1.14 + (boxX + boxW - (boxX + boxH * 1.14)) / 2;
-        canvasCtx.fillStyle = currentPrompt.textColor;
-        canvasCtx.font = "bold " + Math.round(boxH * 0.22) + "px Kanit";
-        drawMirroredText(currentPrompt.text, textCx, iconCy, 'rgba(0,0,0,0.5)', Math.round(boxH * 0.035));
-      } else {
-        canvasCtx.fillStyle = currentPrompt.textColor;
-        canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
-        const promptOutline = isLightColor(currentPrompt.textColor) ? 'rgba(20,20,30,0.55)' : 'rgba(255,255,255,0.7)';
-        drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2), promptOutline, Math.round(boxH * 0.05));
-      }
+      canvasCtx.fillStyle = currentPrompt.textColor;
+      canvasCtx.font = "bold " + Math.round(boxH * 0.34) + "px Kanit";
+      const promptOutline = isLightColor(currentPrompt.textColor) ? 'rgba(20,20,30,0.55)' : 'rgba(255,255,255,0.7)';
+      drawMirroredText(currentPrompt.text, canvasElement.width / 2, boxY + (boxH / 2), promptOutline, Math.round(boxH * 0.05));
     }
 
     function wrapLabel(text, maxLen) {
